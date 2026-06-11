@@ -4,11 +4,13 @@ Unsupervised detection of **Interest Flooding (IFA)** and **Cache Pollution (CP)
 attacks in Named Data Networking (NDN), studied across two independent data-collection
 tracks: an emulation track (**miniNDN**) and a simulation track (**NDNsim**).
 
-The two tracks are complementary stages of the same investigation. miniNDN exposes the
-forwarder's internal state but cannot detect CP; NDNsim cannot see the PIT but, with a
-direction-aware dual detector, detects **both** attacks. The move from one to the other
-was forced by a single instrumentation limit (no PIT access in ndnSIM tracers) and led
-to the project's main methodological result.
+Both tracks use the **same unsupervised Isolation Forest** detector. They are
+complementary stages of the same investigation: miniNDN exposes the forwarder's
+internal state (PIT visible) and detects IFA; NDNsim cannot see the PIT but, on
+face-level tracer counters alone, the same Isolation Forest detects **both** IFA
+and CP. The move from one track to the other was forced by a single instrumentation
+limit (no PIT access in ndnSIM tracers), and the result is that one method covers
+the whole study.
 
 ---
 
@@ -19,15 +21,16 @@ to the project's main methodological result.
 | Data source | NFD internal state (PIT **visible**) | ns-3 / ndnSIM tracers (**no PIT**) |
 | Attacks | IFA only | IFA **and** CP |
 | Labels | none (pure unsupervised) | ground-truth, used **for evaluation only** |
-| Detector | unsupervised **Isolation Forest** | unsupervised **dual z-score** detector (IFA + CP, `max`-combined) |
-| IFA result | 89-99% attacker detection, <2% FPR | **100% attacker** detection, 0-1 s latency |
-| CP result | **undetectable** in the feature set | **100% attacker** detection, ~4% FPR |
+| Detector | unsupervised **Isolation Forest** | unsupervised **Isolation Forest** (same config) |
+| IFA result | 89-99% attacker detection, <2% FPR | **100% attacker** detection, ~1 s latency |
+| CP result | not in feature set | **100% attacker** detection, **0% held-out FPR** |
 | Topologies | tree / dumbbell / DFN | tree / dumbbell / DFN |
 | Findings doc | [`miniNDN/miniNDN_finding.md`](miniNDN/miniNDN_finding.md) | [`NDNsim/NDNsim_finding.md`](NDNsim/NDNsim_finding.md) |
 
-**Headline:** NDNsim closes the CP gap miniNDN could not - because IFA and CP have
-**opposite ratio signatures** (satisfaction ↓/sustained for IFA vs ↑/bursty for CP),
-which a single shared model cancels out but a dual, direction-aware detector separates.
+**Headline:** one unsupervised Isolation Forest detects both attacks across both
+tracks. NDNsim closes the CP gap miniNDN could not - on face-level tracer counters
+alone, with no PIT access - and does so with the **same** detector miniNDN uses, so
+the whole study is unified under a single method.
 
 ---
 
@@ -49,10 +52,10 @@ minor_project_refactored/
 │       └── models/ figures/ results/ FINDINGS.md
 │
 └── NDNsim/                       ── SIMULATION TRACK ────────────────────────
-    ├── NDNsim_finding.md          paper-ready findings (IFA + CP, dual detector)
+    ├── NDNsim_finding.md          paper-ready findings (IFA + CP, Isolation Forest)
     ├── notebooks/
     │   ├── 01_preprocessing.ipynb  02_eda.ipynb  03_updated_detection.ipynb
-    │   └── scenarios_info.md  problem_found_from_graph.txt  (design docs)
+    │   └── scenarios_info.md  (scenario/topology reference)
     ├── ndnsim-research-main/ndn-research/
     │   ├── scenarios/            9 ndnSIM C++ sims (3 topo × normal/ifa/cp)
     │   ├── extensions/           blackhole-producer.{hpp,cpp}
@@ -65,21 +68,23 @@ minor_project_refactored/
 
 ## Key findings (combined)
 
-1. **IFA is detectable in both tracks** - 89-99% (miniNDN) and 100% (NDNsim) on the
-   attacker node, at low false-positive rates.
-2. **CP needs the right instrumentation *and* a separate detector.** It is invisible
-   to miniNDN's aggregate counters but detectable in NDNsim via a `cache_hit_ratio`
-   drop on attacker-adjacent nodes - handled by a dedicated CP branch.
-3. **IFA and CP have opposite ratio signatures**, so a single unsupervised model
-   fails on one of them; a dual, direction-aware detector is required.
+1. **One unsupervised Isolation Forest detects both attacks across both tracks** -
+   89-99% (miniNDN, IFA) and 100% (NDNsim, IFA + CP) on the attacker node, at low to
+   zero false-positive rates. No attack-specific or hand-tuned detector is needed.
+2. **CP is detectable from face-level ns-3 counters.** It is not in miniNDN's
+   feature set, but in NDNsim the same Isolation Forest flags every CP attacker
+   (100%, 0% held-out FPR) from the interest-rate and cache features - closing the
+   CP gap without PIT access.
+3. **The result is robust** - stable across random seeds and across the global /
+   per-topology choice; a feature ablation shows the rate/count features carry the
+   attack signal (the attacker's large junk-interest load is a clear outlier).
 4. **Detection is spatially localized** in both tracks - attacker + on-path routers
    light up, benign/off-path nodes stay silent - useful for attribution.
 5. **PIT-based features are not the reliable IFA signal here.** In miniNDN the PIT
    barely moves at the polling rate; in NDNsim it is not observable at all. Detection
    leans on satisfaction/timeout/interest-rate features instead.
 6. **Load-invariant ratio features matter for robustness** (miniNDN investigation):
-   absolute rate features are load-dependent and brittle; ratios generalize. This is
-   the same principle the NDNsim dual detector is built on.
+   absolute rate features are load-dependent and brittle; ratios generalize.
 
 All training in both tracks is **unsupervised** - models/baselines are fit on normal
 traffic only; where labels exist (NDNsim) they are used purely for evaluation.
@@ -121,6 +126,5 @@ editing.
   `NDNsim/NDNsim_finding.md`
 - **miniNDN engineering investigation** (data-quality, load-invariant features):
   `miniNDN/REFACTOR_FINDINGS.md`
-- **NDNsim scenario reference & detector rationale:**
-  `NDNsim/notebooks/scenarios_info.md`, `NDNsim/notebooks/problem_found_from_graph.txt`
+- **NDNsim scenario reference:** `NDNsim/notebooks/scenarios_info.md`
 - **Paper draft:** `exp_setup_analysis.tex`

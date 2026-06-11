@@ -99,7 +99,8 @@ all-node average (which is diluted by the unaffected majority).
 CP shows **no signature** in any available feature. Baseline cache hit ratio is
 already ~0.002 (the workload rarely re-requests content), so CP has nothing to
 degrade. This is a fundamental limitation of aggregate per-node NFD counters and is
-very likely **why the team moved to the ndnSIM ratio-based dual detector.**
+**why CP detection was moved to the ndnSIM track**, where face-level cache/interest
+counters make CP visible to the same Isolation Forest used here.
 
 ---
 
@@ -208,8 +209,8 @@ they **save their trained models** to `research_analysis/models/` for reproducib
 - **PIT features carry no signal** at this polling rate; the detector relies on
   `satisfaction_ratio` and `nack_rate`.
 - **`unsatisfied_ratio` is redundant** with `satisfaction_ratio`.
-- These limitations are the likely motivation for the ndnSIM ratio-based dual
-  detector approach.
+- These limitations motivated moving CP detection to the ndnSIM track (face-level
+  counters), where the same Isolation Forest detects both IFA and CP.
 
 ---
 

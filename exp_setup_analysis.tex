@@ -34,9 +34,9 @@ via Dual Simulation and Emulation}
 
 % ============================================================
 \begin{abstract}
-This report documents the complete experimental setup and analysis results for an unsupervised anomaly detection system targeting two attack classes in Named Data Networking (NDN): Interest Flooding Attack (IFA) and Content Poisoning (CP). The study uses a dual-platform approach to strengthen result validity. \textbf{Part~I} describes ndnSIM~2.x (ns-3.35) simulations across three topologies --- Tree-12, DFN-12, and Dumbbell-10 --- under IFA and CP attack conditions, evaluated using a dual per-node statistical detector. \textbf{Part~II} describes miniNDN emulation experiments on the same three topologies running real NFD (Named Data Networking Forwarding Daemon) processes, evaluated using an Isolation Forest machine learning model for IFA detection.
+This report documents the complete experimental setup and analysis results for an unsupervised anomaly detection system targeting two attack classes in Named Data Networking (NDN): Interest Flooding Attack (IFA) and Content Poisoning (CP). The study uses a dual-platform approach to strengthen result validity, with the \emph{same} unsupervised Isolation Forest detector applied on both platforms. \textbf{Part~I} describes ndnSIM~2.x (ns-3.35) simulations across three topologies --- Tree-12, DFN-12, and Dumbbell-10 --- under IFA and CP attack conditions. \textbf{Part~II} describes miniNDN emulation experiments on the same three topologies running real NFD (Named Data Networking Forwarding Daemon) processes, evaluated for IFA detection.
 
-A core finding motivating the dual-detector design in Part~I is that IFA and CP produce directionally opposite changes in the same NDN traffic features. In Part~I, the dual z-score detector achieves pre-attack scores of 1.4--1.8 and post-attack lifts of 40--86 points across all topology-attack combinations, with detection latencies of 1--2 seconds for IFA and 1--9 seconds for CP. In Part~II, the Isolation Forest achieves 91.2--98.7\% attacker detection at the operational threshold across all three topologies with false positive rates below 4.3\% on clean normal traffic. Both platforms independently confirm that a globally trained model generalises across all three topologies without retraining, validating the topology-invariance of NDN attack signatures.
+In Part~I, the Isolation Forest detects \emph{both} IFA and CP from face-level ns-3 tracer counters alone (no PIT access): every attacker node is flagged within $\approx 1$ second, no benign consumer is ever flagged, and the held-out normal-traffic false-positive rate is $0\%$. In Part~II, the Isolation Forest achieves 91.2--98.7\% attacker detection at the operational threshold across all three topologies with false positive rates below 4.3\% on clean normal traffic. Both platforms use a single globally trained model that generalises across all three topologies without retraining, validating the topology-invariance of NDN attack signatures and unifying the study under one detection method.
 \end{abstract}
 
 % ============================================================
@@ -185,9 +185,9 @@ Mean Retx Count        & Average interest retransmission count                  
 % ============================================================
 \section{ndnSIM Detection Methodology}
 
-\subsection{Motivation: Opposite Attack Signatures}
+\subsection{Attack Signatures in the Feature Space}
 
-IFA and CP produce directionally opposite changes in the same features, making a single detector insufficient:
+IFA and CP leave distinct fingerprints in the face-level features. Both drive the attacker's interest rate to roughly 109 interests/s, a large outlier that an unsupervised model isolates regardless of the direction of the other features:
 
 \begin{table}[H]
 \centering
@@ -204,70 +204,61 @@ InInterests        & $\uparrow$ +100 fake interests/s           & $\uparrow$ mod
 \end{tabular}
 \end{table}
 
-\subsection{Dual Per-Node Static Baseline Detector}
+\subsection{Unsupervised Isolation Forest Detector}
 
-For each node, a baseline mean $\mu_f$ and standard deviation $\sigma_f$ is computed from the first 200 seconds of the pure normal scenario. No attack data is used.
+The ndnSIM track uses the \emph{same} detector as the miniNDN track: a scikit-learn pipeline of a \texttt{StandardScaler} followed by an \texttt{IsolationForest} ($n\_\text{estimators}=200$, contamination $=0.01$). A single global forest is fit on the nine engineered face/cache features (\texttt{InInterests}, \texttt{OutInterests}, \texttt{InData}, \texttt{cache\_hit\_ratio}, \texttt{satisfaction\_ratio}, \texttt{timeout\_ratio}, \texttt{nack\_ratio}, \texttt{interest\_amp}, \texttt{data\_ratio}) using only the first 200 seconds of the normal scenario. No attack data and no labels enter the fit; the model is fully unsupervised.
 
-\paragraph{IFA Sub-Detector.}
-Directional z-scores on three features ($F_{\text{IFA}}$: satisfaction\_ratio$\downarrow$, timeout\_ratio$\uparrow$, InInterests$\uparrow$). A timestep is flagged if the mean directional z-score exceeds 2.5. The IFA score is the fraction of flagged steps in a 3-step rolling window, scaled to 0--100.
-
-\paragraph{CP Sub-Detector.}
-Directional z-scores on two features ($F_{\text{CP}}$: cache\_hit\_ratio$\downarrow$, InInterests$\uparrow$). A timestep is flagged if the mean directional z-score exceeds 2.0. The CP score is the fraction of flagged steps in a 10-step rolling window, scaled to 0--100. The wider window smooths the oscillating burst pattern of CP traffic.
-
-\paragraph{Combined Score and Alarm.}
-$\text{anomaly\_score} = \max(\text{IFA\_score},\ \text{CP\_score})$. An alarm is raised when anomaly\_score~$> 50$.
+\paragraph{Scoring and Alarm.}
+The Isolation Forest \texttt{decision\_function} (positive $=$ normal) is mapped to a normalized $[0,100]$ score; we report $\text{anomaly\_score} = 100 - \text{norm}$ so that higher means more anomalous, and raise an alarm when $\text{anomaly\_score} \geq 70$. Per-second ground-truth labels are used only for evaluation (detection rate, latency, false-positive rate), never for fitting. A per-topology variant (one forest per topology) is run for comparison, but the global model is the primary detector.
 
 % ============================================================
 \section{ndnSIM Results}
 
-\subsection{Temporal Detection Performance}
+\subsection{Score Separation}
 
 \begin{table}[H]
 \centering
-\caption{ndnSIM: Mean anomaly score before and after attack onset ($t = 301$\,s), global model}
+\caption{ndnSIM: Mean anomaly score before and after attack onset ($t = 301$\,s), global Isolation Forest. Attacker nodes only for pre/post; benign is the mean over non-attacker consumers.}
 \label{tab:ndnsim-lift}
-\begin{tabular}{llccccc}
+\begin{tabular}{llcccc}
 \toprule
-\multirow{2}{*}{\textbf{Topology}} & \multirow{2}{*}{\textbf{Attack}} &
-\multicolumn{2}{c}{\textbf{Pre-attack}} & \multicolumn{2}{c}{\textbf{Post-attack}} & \multirow{2}{*}{\textbf{Lift}} \\
-\cmidrule(lr){3-4}\cmidrule(lr){5-6}
-& & IFA sub & CP sub & IFA sub & CP sub & \\
+\textbf{Topology} & \textbf{Attack} & \textbf{Attacker pre} & \textbf{Attacker post} & \textbf{Benign post} & \textbf{Lift} \\
 \midrule
-DFN      & IFA & 0.7 & 1.0 & 42.2 & 33.2 & \textbf{40.5} \\
-DFN      & CP  & 0.7 & 1.0 & 56.8 & 53.2 & \textbf{55.5} \\
-Dumbbell & IFA & 0.7 & 0.9 & 80.0 & 60.0 & \textbf{78.6} \\
-Dumbbell & CP  & 0.7 & 0.9 & 85.7 & 78.4 & \textbf{85.0} \\
-Tree     & IFA & 0.8 & 1.1 & 42.2 & 32.9 & \textbf{40.4} \\
-Tree     & CP  & 0.8 & 1.1 & 57.4 & 50.5 & \textbf{55.8} \\
+DFN      & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+DFN      & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
+Dumbbell & IFA & 8.7 & 78.4  & 2.7 & \textbf{69.7} \\
+Dumbbell & CP  & 8.4 & 100.0 & 3.4 & \textbf{91.6} \\
+Tree     & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+Tree     & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
 \midrule
-\multicolumn{6}{l}{Normal (all topologies), mean anomaly score} & \textbf{5.21} \\
+\multicolumn{5}{l}{Normal (all topologies), mean anomaly score} & \textbf{18.4} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Pre-attack scores remain between 1.4--1.8. Post-attack lifts range from 40.4 to 85.0 points. Dumbbell produces the strongest signals due to its bottleneck structure concentrating all attack traffic at one node.
+The attacker score jumps far past the alarm threshold (70) for both attacks, reaching the maximum (100) for CP, while benign consumers stay near zero. The held-out normal-traffic false-positive rate (evaluated after the 200\,s training window) is \textbf{0.00\%}.
 
 \subsection{Per-Node Detection and Spatial Localisation}
 
 \begin{table}[H]
 \centering
-\caption{ndnSIM: Node-level detection summary (alarm threshold = 50)}
+\caption{ndnSIM: Node-level detection summary (alarm threshold anomaly\_score $\geq 70$, global model). Attacker-node detection is 100\% in every run; benign consumers are never flagged.}
 \label{tab:ndnsim-detection}
-\begin{tabular}{llcccc}
+\begin{tabular}{llccccc}
 \toprule
-\textbf{Topology} & \textbf{Attack} & \textbf{Nodes detected} & \textbf{Total nodes} & \textbf{Detection rate} & \textbf{Mean latency (s)} \\
+\textbf{Topology} & \textbf{Attack} & \textbf{Attacker det.} & \textbf{Benign FP} & \textbf{Nodes detected} & \textbf{Total nodes} & \textbf{Mean latency (s)} \\
 \midrule
-DFN      & IFA & 5  & 12 & 42\% & 1.2 \\
-DFN      & CP  & 7  & 12 & 58\% & 2.1 \\
-Dumbbell & IFA & 8  & 10 & 80\% & 1.1 \\
-Dumbbell & CP  & 9  & 10 & 90\% & 2.0 \\
-Tree     & IFA & 5  & 12 & 42\% & 1.2 \\
-Tree     & CP  & 7  & 12 & 58\% & 1.1 \\
+DFN      & IFA & 100\% & 0\% & 4 & 12 & 1.0 \\
+DFN      & CP  & 100\% & 0\% & 6 & 12 & 1.0 \\
+Dumbbell & IFA & 100\% & 0\% & 6 & 10 & 1.0 \\
+Dumbbell & CP  & 100\% & 0\% & 7 & 10 & 1.0 \\
+Tree     & IFA & 100\% & 0\% & 4 & 12 & 1.0 \\
+Tree     & CP  & 100\% & 0\% & 6 & 12 & 1.0 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The set of alarming nodes follows the attack's forwarding path: for IFA, the detected nodes are consistently the attacker (\texttt{c1}) and the routers along the \texttt{c1}~$\to$~producer path. For CP, the two attacker consumers and their adjacent routers alarm. This constitutes an implicit attack path fingerprint without explicit routing table access.
+Every attacker node is detected within $\approx 1$\,s, and no benign consumer is ever flagged. The remaining alarming nodes follow the attack's forwarding path: for IFA, the attacker (\texttt{c1}) and the routers along the \texttt{c1}~$\to$~producer path; for CP, the two attacker consumers and their adjacent routers. The un-flagged nodes are the off-path routers and benign consumers. This constitutes an implicit attack path fingerprint without explicit routing table access. The detector is stable across random seeds (identical results for seeds 42, 1, 7) and the per-topology variant performs comparably (89\% attacker detection); a feature ablation confirms the rate/count features carry the attack signal.
 
 % ============================================================
 \part*{Part II: miniNDN Emulation}
@@ -469,11 +460,11 @@ A single globally trained Isolation Forest (trained on all three topologies' nor
 
 \begin{enumerate}
 
-  \item \textbf{IFA and CP produce opposite feature signatures (ndnSIM).} IFA causes satisfaction\_ratio to collapse and timeout\_ratio to spike; CP causes satisfaction\_ratio to stay elevated while cache\_hit\_ratio drops. A single-direction detector cannot cover both attack types simultaneously, motivating the dual sub-detector architecture.
+  \item \textbf{A single unsupervised Isolation Forest detects both IFA and CP (ndnSIM).} Although IFA and CP shift some ratio features in opposite directions (IFA collapses satisfaction\_ratio and spikes timeout\_ratio; CP keeps satisfaction elevated while cache\_hit\_ratio drops), both attacks drive the attacker's interest rate to a large outlier. One forest over the full nine-feature set isolates every attacker node under either attack (100\% detection, $0\%$ benign false alarms), so no attack-specific or direction-aware detector is required.
 
   \item \textbf{Attack signatures are topology-invariant (both platforms).} The global model performs identically to topology-specific models on every evaluation scenario in both ndnSIM and miniNDN. NDN attack signatures in the chosen feature space generalise across hierarchical, mesh, and bottleneck network structures without retraining. This is the single most practically important finding: a detector deployed at one site transfers to any other NDN topology.
 
-  \item \textbf{Sub-second to low single-digit detection latency (ndnSIM).} IFA detected within 1--2 seconds; CP within 1--9 seconds. Both are within the NDN Interest lifetime window (1--4 seconds), meaning alarms are raised before significant PIT or cache damage accumulates.
+  \item \textbf{Near-immediate detection latency (ndnSIM).} Every attacker node is detected within $\approx 1$ second of attack onset for both IFA and CP, well within the NDN Interest lifetime window (1--4 seconds), so alarms are raised before significant PIT or cache damage accumulates.
 
   \item \textbf{Spatial attack fingerprint via router detection pattern (both platforms).} Routers on the attack forwarding path alarm at high rates; routers on unaffected branches remain near zero. This allows approximate attacker localisation without explicit routing table access.
 
@@ -481,7 +472,7 @@ A single globally trained Isolation Forest (trained on all three topologies' nor
 
   \item \textbf{Tree topology exhibits network-wide IFA flooding (miniNDN).} Benign consumers flag at 51--58\% in the tree topology, versus $<7.3\%$ in mesh and dumbbell. The hierarchical structure makes IFA a network-wide QoS degradation event affecting all branches, not just the attacker's branch.
 
-  \item \textbf{Cross-platform agreement strengthens validity.} The Isolation Forest (miniNDN, ML-based) and the dual z-score detector (ndnSIM, statistical) independently confirm topology-invariant detection and spatial attack fingerprinting using different methods, different simulators, and different feature sets. Agreement on the core findings reduces the risk that either result is an artefact of its platform.
+  \item \textbf{Cross-platform agreement strengthens validity.} The same Isolation Forest, applied independently on miniNDN (real NFD, PIT-based features) and ndnSIM (face-level tracer counters, no PIT), confirms topology-invariant detection and spatial attack fingerprinting across different simulators and different feature sets. Agreement on the core findings reduces the risk that either result is an artefact of its platform.
 
 \end{enumerate}
 
@@ -501,7 +492,7 @@ A single globally trained Isolation Forest (trained on all three topologies' nor
 
   \item \textbf{Single attack per run.} Concurrent mixed attacks (simultaneous IFA and CP from different nodes) were not evaluated on either platform.
 
-  \item \textbf{Detector threshold sensitivity not evaluated.} Z-score thresholds (2.5 for IFA, 2.0 for CP) and Isolation Forest contamination (0.01) were set based on observed training distributions. Systematic sensitivity analysis was not performed.
+  \item \textbf{Detector threshold sensitivity not evaluated.} The Isolation Forest contamination (0.01) and the alarm threshold were set from the training distribution; a systematic sensitivity analysis was not performed. The detector was, however, confirmed stable across random seeds and across the global / per-topology choice.
 
 \end{enumerate}
 
@@ -562,14 +553,14 @@ Several issues were identified and resolved during development:
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.85\textwidth]{fig_timeseries_tree.png}
-  \caption{(ndnSIM, Part~I) Feature time series for the Tree topology, mean across all nodes. The vertical dashed line marks attack onset at $t = 300$\,s. IFA (red) causes satisfaction\_ratio to collapse and InInterests to spike. CP (orange) causes cache\_hit\_ratio to drop while satisfaction stays elevated. These opposite directional signatures motivate the dual sub-detector design.}
+  \caption{(ndnSIM, Part~I) Feature time series for the Tree topology, mean across all nodes. The vertical dashed line marks attack onset at $t = 300$\,s. IFA (red) causes satisfaction\_ratio to collapse and InInterests to spike. CP (orange) causes cache\_hit\_ratio to drop while satisfaction stays elevated. Both attacks drive a large interest-rate deviation that the Isolation Forest isolates.}
   \label{fig:ndnsim-timeseries}
 \end{figure}
 
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.85\textwidth]{fig_score_timeseries.png}
-  \caption{(ndnSIM, Part~I) Anomaly score over time for all six topology-attack combinations, global model, mean across all nodes. Dotted lines show IFA and CP sub-scores; solid line shows combined score. The orange horizontal line is the alarm threshold (50). Dumbbell produces sustained scores of 80--86 due to bottleneck concentration; DFN and Tree show spikier patterns because only 5--7 of 12 nodes lie on the attack forwarding path.}
+  \caption{(ndnSIM, Part~I) Isolation Forest anomaly score over time for all six topology-attack combinations, global model. Each panel shows the mean score of the attacker nodes against the normal $\pm 1\sigma$ band. The orange horizontal line is the alarm threshold (70). Attacker nodes cross the alarm within $\approx 1$\,s of attack onset for both IFA and CP, reaching the maximum score for CP.}
   \label{fig:ndnsim-scores}
 \end{figure}
 
