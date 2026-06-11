@@ -1,0 +1,1477 @@
+# =============================================================================
+# 01_preprocessing.ipynb
+# =============================================================================
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import warnings
+warnings.filterwarnings("ignore")
+
+DATA_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/ndnsim-research-main/ndn-research/results")
+SAVE_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/processed")
+SAVE_DIR.mkdir(parents=True, exist_ok=True)
+
+TOPOLOGIES = ["dfn", "dumbbell", "tree"]
+SCENARIOS  = ["normal", "ifa", "cp"]
+
+def data_file(topo, scenario, ftype):
+    ext = "csv" if ftype == "ground-truth" else "txt"
+    return DATA_DIR / f"{topo}-{scenario}-{ftype}.{ext}"
+
+print("Paths ready.")
+print(f"DATA_DIR : {DATA_DIR}")
+print(f"SAVE_DIR : {SAVE_DIR}")
+
+# ── File inventory ──────────────────────────────────────────────────────────
+
+print(f"{'File':<45} {'Exists':>6} {'Size (KB)':>10}")
+print("-" * 65)
+missing = []
+for topo in TOPOLOGIES:
+    for scenario in SCENARIOS:
+        for ftype in ["rate-trace", "cs-trace", "app-delays", "ground-truth"]:
+            p = data_file(topo, scenario, ftype)
+            exists = p.exists()
+            size = f"{p.stat().st_size / 1024:.1f}" if exists else "—"
+            flag = "✓" if exists else "✗ MISSING"
+            print(f"{p.name:<45} {flag:>6} {size:>10}")
+            if not exists:
+                missing.append(p.name)
+
+print(f"\n{len(missing)} file(s) missing: {missing if missing else 'none'}")
+
+# ── Loaders ─────────────────────────────────────────────────────────────────
+
+def load_rate_trace(topo, scenario):
+    p = data_file(topo, scenario, "rate-trace")
+    rt = pd.read_csv(p, sep="\t", comment="#")
+    rt.columns = rt.columns.str.strip()
+
+    KEEP_TYPES = {
+        "InInterests", "OutInterests", "InData",
+        "InNacks", "InSatisfiedInterests", "InTimedOutInterests"
+    }
+    rt = rt[rt["Type"].isin(KEEP_TYPES)][["Time", "Node", "Type", "Packets"]]
+
+    rt_pivot = (
+        rt.groupby(["Time", "Node", "Type"])["Packets"]
+        .sum()
+        .unstack("Type")
+        .fillna(0)
+        .reset_index()
+    )
+    rt_pivot.columns.name = None
+    return rt_pivot
+
+sample = load_rate_trace("dfn", "normal")
+print("Shape:", sample.shape)
+print("Columns:", sample.columns.tolist())
+print("Time range:", sample["Time"].min(), "→", sample["Time"].max())
+sample.head(3)
+
+
+def load_cs_trace(topo, scenario):
+    p = data_file(topo, scenario, "cs-trace")
+    cs = pd.read_csv(p, sep="\t", comment="#")
+    cs.columns = cs.columns.str.strip()
+    cs = cs[["Time", "Node", "Type", "Packets"]]
+
+    cs_pivot = (
+        cs.groupby(["Time", "Node", "Type"])["Packets"]
+        .sum()
+        .unstack("Type")
+        .fillna(0)
+        .reset_index()
+    )
+    cs_pivot.columns.name = None
+    return cs_pivot
+
+sample_cs = load_cs_trace("dfn", "normal")
+print("Shape:", sample_cs.shape)
+sample_cs.head(3)
+
+
+def load_app_delays(topo, scenario):
+    p = data_file(topo, scenario, "app-delays")
+    ad = pd.read_csv(p, sep="\t", comment="#")
+    ad.columns = ad.columns.str.strip()
+    ad = ad[ad["Type"] == "FullDelay"].copy()
+
+    ad["Time"] = ad["Time"].apply(np.floor).astype(int).clip(lower=1)
+
+    agg = (
+        ad.groupby(["Time", "Node"])
+        .agg(
+            delay_mean  = ("DelayS",    "mean"),
+            delay_p95   = ("DelayS",    lambda x: np.percentile(x, 95)),
+            retx_mean   = ("RetxCount", "mean"),
+            hop_mean    = ("HopCount",  "mean"),
+            n_satisfied = ("DelayS",    "count")
+        )
+        .reset_index()
+    )
+    return agg
+
+sample_ad = load_app_delays("dfn", "normal")
+print("Shape:", sample_ad.shape)
+print("Nodes present (consumers):", sorted(sample_ad["Node"].unique()))
+sample_ad.head(3)
+
+
+def load_ground_truth(topo, scenario):
+    gt = pd.read_csv(data_file(topo, scenario, "ground-truth"))
+    gt.columns = gt.columns.str.strip().str.lower()
+    gt = gt.rename(columns={"time": "Time"})
+    gt["Time"] = gt["Time"] + 1
+    gt = gt[(gt["Time"] >= 1) & (gt["Time"] <= 599)]
+    return gt
+
+gt_test = load_ground_truth("dfn", "ifa")
+print(gt_test.shape)
+print(gt_test["label"].value_counts())
+print("\nBoundary check (should be normal at 300, ifa at 301):")
+print(gt_test[gt_test["Time"].isin([299, 300, 301, 302])])
+
+# ── Consumer/router node identification ─────────────────────────────────────
+
+CONSUMER_NODES = {}
+for topo in TOPOLOGIES:
+    ad = pd.read_csv(data_file(topo, "normal", "app-delays"), sep="\t", comment="#")
+    ad.columns = ad.columns.str.strip()
+    CONSUMER_NODES[topo] = set(ad["Node"].unique())
+
+for topo, nodes in CONSUMER_NODES.items():
+    rt = pd.read_csv(data_file(topo, "normal", "rate-trace"), sep="\t", comment="#")
+    rt.columns = rt.columns.str.strip()
+    all_nodes = set(rt["Node"].unique())
+    router_nodes = all_nodes - nodes
+    print(f"{topo}: consumers={sorted(nodes)}, routers={sorted(router_nodes)}")
+
+# ── Feature engineering ─────────────────────────────────────────────────────
+
+def engineer_features(topo, scenario):
+    rt = load_rate_trace(topo, scenario)
+    cs = load_cs_trace(topo, scenario)
+    ad = load_app_delays(topo, scenario)
+    gt = load_ground_truth(topo, scenario)
+
+    df = (rt
+          .merge(cs, on=["Time", "Node"], how="left")
+          .merge(ad, on=["Time", "Node"], how="left"))
+
+    delay_cols = ["delay_mean", "delay_p95", "retx_mean", "hop_mean", "n_satisfied"]
+    df[delay_cols] = df[delay_cols].fillna(0)
+
+    total_cs = df["CacheHits"] + df["CacheMisses"]
+    df["cache_hit_ratio"] = np.where(total_cs > 0, df["CacheHits"] / total_cs, 0.0)
+
+    df["satisfaction_ratio"] = np.where(
+        df["InInterests"] > 0,
+        df["InSatisfiedInterests"] / df["InInterests"], 0.0).clip(0, 1)
+
+    df["timeout_ratio"] = np.where(
+        df["InInterests"] > 0,
+        df["InTimedOutInterests"] / df["InInterests"], 0.0).clip(0, 1)
+
+    df["nack_ratio"] = np.where(
+        df["InInterests"] > 0,
+        df["InNacks"] / df["InInterests"], 0.0).clip(0, 1)
+
+    df["interest_amp"] = np.where(
+        df["InInterests"] > 0,
+        df["OutInterests"] / df["InInterests"], 1.0)
+
+    df["data_ratio"] = np.where(
+        df["OutInterests"] > 0,
+        df["InData"] / df["OutInterests"], 0.0).clip(0, 1)
+
+    df["role"] = df["Node"].apply(
+        lambda n: "consumer" if n in CONSUMER_NODES[topo] else "router")
+
+    df = df.merge(gt[["Time", "label"]], on="Time", how="left")
+    df["label"] = df["label"].fillna("normal")
+
+    df["topology"] = topo
+    df["scenario"] = scenario
+    return df
+
+test_df = engineer_features("dfn", "normal")
+print("Shape:", test_df.shape)
+print("Columns:", test_df.columns.tolist())
+print("NaN remaining:", test_df.isna().sum()[test_df.isna().sum() > 0].to_dict())
+test_df.head(3)
+
+# ── Build full dataset ──────────────────────────────────────────────────────
+
+all_dfs = []
+for topo in TOPOLOGIES:
+    for scenario in SCENARIOS:
+        try:
+            df = engineer_features(topo, scenario)
+            all_dfs.append(df)
+            print(f"{topo}-{scenario}: {df.shape} | labels: {df['label'].value_counts().to_dict()}")
+        except Exception as e:
+            print(f"ERROR {topo}-{scenario}: {e}")
+
+full = pd.concat(all_dfs, ignore_index=True)
+print(f"\nFull dataset: {full.shape}")
+print(full["label"].value_counts())
+
+# ── Save ─────────────────────────────────────────────────────────────────────
+
+full.to_csv(SAVE_DIR / "full_dataset.csv", index=False)
+print(f"Saved full_dataset.csv — {full.shape}")
+
+train_normal = full[full["scenario"] == "normal"]
+train_normal.to_csv(SAVE_DIR / "train_normal.csv", index=False)
+print(f"Saved train_normal.csv — {train_normal.shape}")
+
+for topo in TOPOLOGIES:
+    for scenario in SCENARIOS:
+        subset = full[(full["topology"] == topo) & (full["scenario"] == scenario)]
+        fname = SAVE_DIR / f"{topo}_{scenario}.csv"
+        subset.to_csv(fname, index=False)
+        print(f"Saved {fname.name} — {subset.shape}")
+
+print(f"\n✓ All files saved to {SAVE_DIR}")
+
+print(f"{'File':<35} {'Rows':>8} {'Cols':>6}")
+print("-" * 52)
+for f in sorted(SAVE_DIR.glob("*.csv")):
+    df_check = pd.read_csv(f, nrows=1)
+    nrows = sum(1 for _ in open(f)) - 1
+    print(f"{f.name:<35} {nrows:>8} {len(df_check.columns):>6}")
+
+# ── Ground-truth boundary check ──────────────────────────────────────────────
+
+import pandas as pd
+from pathlib import Path
+
+DATA_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/ndnsim-research-main/ndn-research/results")
+
+for topo in ["dfn", "dumbbell", "tree"]:
+    for scenario in ["ifa", "cp"]:
+        gt = pd.read_csv(DATA_DIR / f"{topo}-{scenario}-ground-truth.csv")
+        gt.columns = gt.columns.str.strip().str.lower()
+        counts = gt["label"].value_counts().to_dict()
+        attack_start = gt[gt["label"] != "normal"]["time"].min()
+        print(f"{topo}-{scenario}: {counts} | attack starts at t={attack_start}")
+
+
+# =============================================================================
+# 02_eda.ipynb
+# =============================================================================
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import Patch, Rectangle
+from scipy.stats import ks_2samp
+import warnings
+warnings.filterwarnings("ignore")
+
+plt.rcParams.update({"figure.dpi": 150, "font.size": 9})
+
+PROCESSED_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/processed")
+FIG_DIR       = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/figures/eda")
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+TOPOLOGIES = ["dfn", "dumbbell", "tree"]
+SCENARIOS  = ["normal", "ifa", "cp"]
+
+FEATURES = [
+    "cache_hit_ratio", "satisfaction_ratio", "timeout_ratio",
+    "nack_ratio", "interest_amp", "data_ratio",
+    "InInterests", "OutInterests", "InData",
+    "delay_mean", "retx_mean"
+]
+
+FEAT_LABELS = {
+    "cache_hit_ratio":    "Cache Hit Ratio",
+    "satisfaction_ratio": "Satisfaction Ratio",
+    "timeout_ratio":      "Timeout Ratio",
+    "nack_ratio":         "Nack Ratio",
+    "interest_amp":       "Interest Amplification",
+    "data_ratio":         "Data Ratio",
+    "InInterests":        "In-Interests",
+    "OutInterests":       "Out-Interests",
+    "InData":             "In-Data",
+    "delay_mean":         "Mean Delay (s)",
+    "retx_mean":          "Mean Retx Count"
+}
+
+SCENARIO_COLORS = {
+    "normal": "#4c72b0",
+    "ifa":    "#c44e52",
+    "cp":     "#dd8452"
+}
+
+ROLE_COLORS = {
+    "router":   "#dd8452",
+    "consumer": "#4c72b0"
+}
+
+print("Ready.")
+print(f"FIG_DIR: {FIG_DIR}")
+
+# ── Load data ────────────────────────────────────────────────────────────────
+
+full = pd.read_csv(PROCESSED_DIR / "full_dataset.csv")
+
+data = {}
+for topo in TOPOLOGIES:
+    data[topo] = {}
+    for scenario in SCENARIOS:
+        data[topo][scenario] = full[
+            (full["topology"] == topo) &
+            (full["scenario"] == scenario)
+        ].copy()
+
+print(f"Full dataset: {full.shape}")
+print("\nRows per topology-scenario:")
+print(full.groupby(["topology", "scenario"]).size().to_string())
+
+print("\nNode roles per topology:")
+for topo in TOPOLOGIES:
+    roles = full[full["topology"]==topo].groupby(["Node","role"]).size().reset_index()
+    consumers = sorted(roles[roles["role"]=="consumer"]["Node"].tolist())
+    routers   = sorted(roles[roles["role"]=="router"]["Node"].tolist())
+    print(f"  {topo}: consumers={consumers}, routers={routers}")
+
+# ── Dataset overview ─────────────────────────────────────────────────────────
+
+rows = []
+for topo in TOPOLOGIES:
+    for scenario in SCENARIOS:
+        df = data[topo][scenario]
+        rows.append({
+            "topology": topo,
+            "scenario": scenario,
+            "total_rows": len(df),
+            "nodes": df["Node"].nunique(),
+            "time_range": f"{df['Time'].min()}–{df['Time'].max()}",
+            "consumers": len(df[df["role"]=="consumer"]["Node"].unique()),
+            "routers":   len(df[df["role"]=="router"]["Node"].unique()),
+        })
+
+df_overview = pd.DataFrame(rows)
+print("Dataset Overview")
+print("=" * 70)
+print(df_overview.to_string(index=False))
+
+# ── Feature distributions ────────────────────────────────────────────────────
+
+fig, axes = plt.subplots(3, 4, figsize=(20, 14))
+axes = axes.flatten()
+
+for i, feat in enumerate(FEATURES):
+    ax = axes[i]
+    for scenario, color in SCENARIO_COLORS.items():
+        vals = full[full["scenario"]==scenario][feat]
+        vals.clip(upper=vals.quantile(0.99)).hist(
+            bins=50, alpha=0.5, color=color,
+            label=scenario, ax=ax, density=True)
+    ax.set_title(FEAT_LABELS[feat], fontsize=9, fontweight="bold")
+    ax.legend(fontsize=7)
+    ax.set_xlabel("")
+
+for j in range(len(FEATURES), len(axes)):
+    axes[j].set_visible(False)
+
+fig.suptitle("Feature Distributions: Normal vs IFA vs CP (All Topologies)",
+             fontsize=12, fontweight="bold")
+plt.tight_layout(rect=[0, 0, 1, 0.97])
+plt.savefig(FIG_DIR / "fig_feature_distributions.png", bbox_inches="tight")
+plt.show()
+print(f"Saved fig_feature_distributions.png")
+
+# ── Per-node boxplots ────────────────────────────────────────────────────────
+
+def plot_pernode_boxplots(topo):
+    df_normal = data[topo]["normal"]
+    df_ifa    = data[topo]["ifa"]
+    df_cp     = data[topo]["cp"]
+
+    nodes  = sorted(full[full["topology"]==topo]["Node"].unique())
+    n_feat = len(FEATURES)
+    n_cols = 4
+    n_rows = int(np.ceil(n_feat / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(22, n_rows * 4))
+    axes = axes.flatten()
+
+    x      = np.arange(len(nodes))
+    width  = 0.25
+
+    for fi, feat in enumerate(FEATURES):
+        ax = axes[fi]
+
+        norm_data = [df_normal[df_normal["Node"]==n][feat].dropna().values for n in nodes]
+        ifa_data  = [df_ifa[df_ifa["Node"]==n][feat].dropna().values for n in nodes]
+        cp_data   = [df_cp[df_cp["Node"]==n][feat].dropna().values for n in nodes]
+
+        def bp(data, positions, color):
+            return ax.boxplot(data, positions=positions, widths=width*0.9,
+                              patch_artist=True, showfliers=False,
+                              boxprops=dict(facecolor=color, alpha=0.7),
+                              medianprops=dict(color="white", linewidth=1.5),
+                              whiskerprops=dict(color=color),
+                              capprops=dict(color=color))
+
+        bp(norm_data, x - width, SCENARIO_COLORS["normal"])
+        bp(ifa_data,  x,         SCENARIO_COLORS["ifa"])
+        bp(cp_data,   x + width, SCENARIO_COLORS["cp"])
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(nodes, fontsize=8)
+        ax.set_title(FEAT_LABELS[feat], fontsize=9, fontweight="bold")
+        ax.set_xlim(-0.6, len(nodes) - 0.4)
+
+    for j in range(n_feat, len(axes)):
+        axes[j].set_visible(False)
+
+    legend_patches = [
+        Patch(facecolor=SCENARIO_COLORS["normal"], alpha=0.7, label="Normal"),
+        Patch(facecolor=SCENARIO_COLORS["ifa"],    alpha=0.7, label="IFA"),
+        Patch(facecolor=SCENARIO_COLORS["cp"],     alpha=0.7, label="CP"),
+    ]
+    fig.legend(handles=legend_patches, loc="upper right", fontsize=9)
+    fig.suptitle(f"Per-Node Feature Distributions — {topo.upper()} Topology",
+                 fontsize=13, fontweight="bold")
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    fname = FIG_DIR / f"fig_boxplots_{topo}.png"
+    plt.savefig(fname, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname.name}")
+
+for topo in TOPOLOGIES:
+    plot_pernode_boxplots(topo)
+
+# ── Time-series plots ────────────────────────────────────────────────────────
+
+KEY_FEATURES = [
+    "satisfaction_ratio", "timeout_ratio",
+    "cache_hit_ratio", "InInterests"
+]
+
+def plot_timeseries(topo):
+    fig, axes = plt.subplots(len(KEY_FEATURES), 1, figsize=(14, 3 * len(KEY_FEATURES)))
+
+    for i, feat in enumerate(KEY_FEATURES):
+        ax = axes[i]
+        for scenario, color in SCENARIO_COLORS.items():
+            grp = data[topo][scenario]
+            ts  = grp.groupby("Time")[feat].mean()
+            ax.plot(ts.index, ts.values, color=color,
+                    label=scenario, linewidth=1.2, alpha=0.9)
+        ax.axvline(300, color="black", linestyle="--",
+                   linewidth=1.0, label="t=300 (attack start)")
+        ax.set_ylabel(FEAT_LABELS[feat], fontsize=8)
+        ax.legend(fontsize=7, loc="upper left")
+        ax.set_xlabel("Time (s)")
+
+    fig.suptitle(f"Feature Timeseries — {topo.upper()} Topology (mean across all nodes)",
+                 fontsize=11, fontweight="bold")
+    plt.tight_layout()
+    fname = FIG_DIR / f"fig_timeseries_{topo}.png"
+    plt.savefig(fname, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname.name}")
+
+for topo in TOPOLOGIES:
+    plot_timeseries(topo)
+
+# ── KS test ──────────────────────────────────────────────────────────────────
+
+ks_rows = []
+for topo in TOPOLOGIES:
+    nodes = sorted(full[full["topology"]==topo]["Node"].unique())
+    for node in nodes:
+        for attack in ["ifa", "cp"]:
+            norm_df = data[topo]["normal"]
+            atk_df  = data[topo][attack]
+            for feat in FEATURES:
+                norm_vals = norm_df[norm_df["Node"]==node][feat].dropna().values
+                atk_vals  = atk_df[atk_df["Node"]==node][feat].dropna().values
+                if len(norm_vals) < 2 or len(atk_vals) < 2:
+                    ks_stat, p_val = np.nan, np.nan
+                else:
+                    ks_stat, p_val = ks_2samp(norm_vals, atk_vals)
+                ks_rows.append({
+                    "topology": topo, "node": node,
+                    "attack": attack, "feature": feat,
+                    "ks_stat": ks_stat, "p_value": p_val,
+                    "role": full[(full["topology"]==topo) &
+                                 (full["Node"]==node)]["role"].iloc[0]
+                })
+
+df_ks = pd.DataFrame(ks_rows)
+df_ks.to_csv(PROCESSED_DIR / "ks_results.csv", index=False)
+print("Saved ks_results.csv")
+print("\nTop 15 KS results (IFA, all topologies):")
+print(df_ks[df_ks["attack"]=="ifa"]
+      .sort_values("ks_stat", ascending=False)
+      .head(15)[["topology","node","role","feature","ks_stat"]].to_string(index=False))
+
+# ── KS heatmaps ──────────────────────────────────────────────────────────────
+
+def plot_ks_heatmap(topo, attack):
+    nodes   = sorted(full[full["topology"]==topo]["Node"].unique())
+    df_topo = df_ks[(df_ks["topology"]==topo) & (df_ks["attack"]==attack)]
+
+    matrix = np.zeros((len(nodes), len(FEATURES)))
+    for ri, node in enumerate(nodes):
+        for ci, feat in enumerate(FEATURES):
+            row = df_topo[(df_topo["node"]==node) & (df_topo["feature"]==feat)]
+            if not row.empty and not np.isnan(row["ks_stat"].values[0]):
+                matrix[ri, ci] = row["ks_stat"].values[0]
+
+    fig, ax = plt.subplots(figsize=(14, max(4, len(nodes) * 0.6)))
+    im = ax.imshow(matrix, cmap="YlOrRd", vmin=0, vmax=1, aspect="auto")
+
+    for ri in range(len(nodes)):
+        for ci in range(len(FEATURES)):
+            ax.text(ci, ri, f"{matrix[ri, ci]:.2f}",
+                    ha="center", va="center", fontsize=6.5,
+                    color="white" if matrix[ri, ci] > 0.7 else "black")
+
+    ax.set_xticks(range(len(FEATURES)))
+    ax.set_xticklabels([FEAT_LABELS[f] for f in FEATURES],
+                       rotation=40, ha="right", fontsize=8)
+    ax.set_yticks(range(len(nodes)))
+    ax.set_yticklabels(nodes, fontsize=9)
+
+    cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02)
+    cbar.set_label("KS D-statistic", fontsize=9)
+
+    ax.set_title(
+        f"KS D-statistic Heatmap — {topo.upper()} vs {attack.upper()}",
+        fontsize=11, fontweight="bold")
+    plt.tight_layout()
+    fname = FIG_DIR / f"fig_ks_heatmap_{topo}_{attack}.png"
+    plt.savefig(fname, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname.name}")
+
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        plot_ks_heatmap(topo, attack)
+
+# ── Correlation matrices ─────────────────────────────────────────────────────
+
+def plot_correlations(topo):
+    df_norm = data[topo]["normal"]
+    df_ifa  = data[topo]["ifa"]
+    df_cp   = data[topo]["cp"]
+
+    corr_norm = df_norm[FEATURES].corr()
+    corr_ifa  = df_ifa[FEATURES].corr()
+    corr_cp   = df_cp[FEATURES].corr()
+
+    labels = [FEAT_LABELS[f] for f in FEATURES]
+
+    fig, axes = plt.subplots(1, 3, figsize=(22, 6))
+    for ax, corr_mat, title in [
+        (axes[0], corr_norm, "Normal"),
+        (axes[1], corr_ifa,  "IFA"),
+        (axes[2], corr_cp,   "CP")
+    ]:
+        im = ax.imshow(corr_mat.values, cmap="RdBu_r",
+                       vmin=-1, vmax=1, aspect="auto")
+        ax.set_xticks(range(len(FEATURES)))
+        ax.set_yticks(range(len(FEATURES)))
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+        ax.set_yticklabels(labels, fontsize=7)
+        ax.set_title(title, fontsize=10, fontweight="bold")
+        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    fig.suptitle(f"Feature Correlations — {topo.upper()} Topology",
+                 fontsize=12, fontweight="bold")
+    plt.tight_layout()
+    fname = FIG_DIR / f"fig_correlation_{topo}.png"
+    plt.savefig(fname, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname.name}")
+
+for topo in TOPOLOGIES:
+    plot_correlations(topo)
+
+# ── KS summary ───────────────────────────────────────────────────────────────
+
+print("=" * 65)
+print("Top 5 Features by Mean KS Statistic (Normal vs IFA)")
+print("=" * 65)
+ifa_ks = df_ks[df_ks["attack"]=="ifa"].groupby("feature")["ks_stat"].mean().sort_values(ascending=False)
+print(ifa_ks.round(3).to_string())
+
+print("\n" + "=" * 65)
+print("Top 5 Features by Mean KS Statistic (Normal vs CP)")
+print("=" * 65)
+cp_ks = df_ks[df_ks["attack"]=="cp"].groupby("feature")["ks_stat"].mean().sort_values(ascending=False)
+print(cp_ks.round(3).to_string())
+
+print("\n" + "=" * 65)
+print("KS Stats by Role (IFA)")
+print("=" * 65)
+print(df_ks[df_ks["attack"]=="ifa"].groupby(["role","feature"])["ks_stat"]
+      .mean().round(3).unstack("feature").T.to_string())
+
+
+# =============================================================================
+# 03_detection.ipynb
+# =============================================================================
+
+from pathlib import Path
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.patches import Patch, Rectangle
+from sklearn.metrics import confusion_matrix
+import warnings
+warnings.filterwarnings("ignore")
+plt.rcParams.update({"figure.dpi": 150, "font.size": 9})
+
+PROCESSED_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/processed")
+FIG_DIR = Path("/Users/ankitpokhrel/Desktop/NDN-Toolkit/ndnsim_analysis/figures/detection")
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+TOPOLOGIES = ["dfn", "dumbbell", "tree"]
+SCENARIOS = ["normal", "ifa", "cp"]
+
+SCENARIO_COLORS = {
+    "normal": "#4c72b0",
+    "ifa":    "#c44e52",
+    "cp":     "#dd8452"
+}
+
+ROLE_DETECT_FEATURES = {
+    "consumer": ["cache_hit_ratio"],
+    "router":   ["timeout_ratio", "satisfaction_ratio"],
+}
+
+DETECT_FEATURES = ["satisfaction_ratio", "timeout_ratio", "cache_hit_ratio"]
+BASELINE_WINDOW   = 200
+Z_THRESHOLD       = 2.5
+PERSIST_WINDOW    = 3
+ALARM_THRESHOLD   = 50
+ATTACK_START = 301
+
+print("Ready.")
+print(f"PROCESSED_DIR : {PROCESSED_DIR}")
+print(f"FIG_DIR       : {FIG_DIR}")
+print(f"Detect features: {DETECT_FEATURES}")
+print(f"Attack boundary: t >= {ATTACK_START}")
+
+# ── Load data ────────────────────────────────────────────────────────────────
+
+full = pd.read_csv(PROCESSED_DIR / "full_dataset.csv")
+
+print(f"Full dataset: {full.shape}")
+print(f"Columns: {full.columns.tolist()}")
+print(f"\nTopologies: {full['topology'].unique()}")
+print(f"Scenarios : {full['scenario'].unique()}")
+print(f"Time range: {full['Time'].min()} → {full['Time'].max()}")
+
+# ── Z-score distribution diagnostic ─────────────────────────────────────────
+
+train_normal = pd.read_csv(PROCESSED_DIR / "train_normal.csv")
+
+ROLE_DETECT_FEATURES = {
+    "consumer": ["cache_hit_ratio"],
+    "router":   ["timeout_ratio", "satisfaction_ratio"],
+}
+
+print("Z-score distribution analysis (using per-node baselines from first 200s)\n")
+
+for topo in TOPOLOGIES:
+    df_topo_normal = train_normal[train_normal["topology"] == topo]
+
+    for role in ["consumer", "router"]:
+        feats = ROLE_DETECT_FEATURES[role]
+        nodes = df_topo_normal[df_topo_normal["role"] == role]["Node"].unique()
+
+        z_buckets = {"normal": [], "ifa": [], "cp": []}
+
+        for node in nodes:
+            baseline = df_topo_normal[
+                (df_topo_normal["Node"] == node) &
+                (df_topo_normal["Time"] <= BASELINE_WINDOW)
+            ]
+            if len(baseline) < 5:
+                continue
+
+            stats = {
+                f: (baseline[f].mean(), max(baseline[f].std(), 1e-9))
+                for f in feats
+            }
+
+            for scenario in ["normal", "ifa", "cp"]:
+                node_data = full[
+                    (full["topology"] == topo) &
+                    (full["Node"] == node) &
+                    (full["scenario"] == scenario) &
+                    (full["Time"] >= ATTACK_START)
+                ]
+                if len(node_data) == 0:
+                    continue
+
+                z_cols = []
+                for f in feats:
+                    mu, sigma = stats[f]
+                    z_cols.append(((node_data[f] - mu) / sigma).abs())
+
+                z_mean = pd.concat(z_cols, axis=1).mean(axis=1)
+                z_buckets[scenario].extend(z_mean.tolist())
+
+        print(f"{topo.upper()} — {role}")
+        print(f"  {'Scenario':<10} {'mean':>6} {'p50':>6} {'p75':>6} "
+              f"{'p90':>6} {'p95':>6} {'p99':>6} {'max':>7}")
+
+        for scenario in ["normal", "ifa", "cp"]:
+            vals = z_buckets[scenario]
+            if len(vals) == 0:
+                print(f"  {scenario:<10} {'(no data)':>6}")
+                continue
+            arr = np.array(vals)
+            print(f"  {scenario:<10} "
+                  f"{arr.mean():>6.2f} "
+                  f"{np.percentile(arr, 50):>6.2f} "
+                  f"{np.percentile(arr, 75):>6.2f} "
+                  f"{np.percentile(arr, 90):>6.2f} "
+                  f"{np.percentile(arr, 95):>6.2f} "
+                  f"{np.percentile(arr, 99):>6.2f} "
+                  f"{arr.max():>7.2f}")
+        print()
+
+# ── Router baseline std inspection ───────────────────────────────────────────
+
+print("Router baseline std per node (first 200s of normal)\n")
+print(f"{'Topology':<12} {'Node':>5} {'sat_ratio std':>15} "
+      f"{'timeout std':>13} {'n_rows':>7} {'issue'}")
+print("-" * 70)
+
+problem_nodes = []
+
+for topo in TOPOLOGIES:
+    df_topo_normal = train_normal[train_normal["topology"] == topo]
+    router_nodes = df_topo_normal[
+        df_topo_normal["role"] == "router"
+    ]["Node"].unique()
+
+    for node in sorted(router_nodes):
+        baseline = df_topo_normal[
+            (df_topo_normal["Node"] == node) &
+            (df_topo_normal["Time"] <= BASELINE_WINDOW)
+        ]
+
+        sat_vals = baseline["satisfaction_ratio"]
+        tmo_vals = baseline["timeout_ratio"]
+
+        sat_std = sat_vals.std()
+        tmo_std = tmo_vals.std()
+        sat_mean = sat_vals.mean()
+        tmo_mean = tmo_vals.mean()
+
+        issues = []
+        if sat_std < 0.01:
+            issues.append(f"sat_std={sat_std:.6f}")
+        if tmo_std < 0.01:
+            issues.append(f"tmo_std={tmo_std:.6f}")
+        if sat_mean == 0:
+            issues.append("sat always 0")
+        if tmo_mean == 0:
+            issues.append("tmo always 0")
+
+        issue_str = ", ".join(issues) if issues else "ok"
+        flag = " ← BROKEN" if issues else ""
+
+        print(f"{topo:<12} {node:>5} {sat_std:>15.6f} "
+              f"{tmo_std:>13.6f} {len(baseline):>7} {issue_str}{flag}")
+
+        if issues:
+            problem_nodes.append((topo, node, issues))
+
+print(f"\n{len(problem_nodes)} problem nodes found.")
+
+if problem_nodes:
+    sample_topo, sample_node, _ = problem_nodes[0]
+    sample = train_normal[
+        (train_normal["topology"] == sample_topo) &
+        (train_normal["Node"] == sample_node) &
+        (train_normal["Time"] <= BASELINE_WINDOW)
+    ]
+    print(f"\nValue distribution for {sample_topo} node {sample_node} "
+          f"in baseline window:")
+    print(sample[["satisfaction_ratio", "timeout_ratio",
+                   "InInterests", "InSatisfiedInterests",
+                   "InTimedOutInterests"]].describe().round(4))
+
+# ── Baseline computation and detector ────────────────────────────────────────
+
+ROLE_DETECT_FEATURES = {
+    "consumer": ["cache_hit_ratio"],
+    "router":   ["satisfaction_ratio", "timeout_ratio"],
+}
+
+print("Role-specific detection features:", ROLE_DETECT_FEATURES)
+
+
+def compute_baseline_stats(df_normal, topologies, baseline_window=BASELINE_WINDOW):
+    MIN_STD_FLOOR = 0.05
+
+    df_train = df_normal[df_normal["topology"].isin(topologies)]
+    baseline_data = df_train[df_train["Time"] <= baseline_window]
+
+    raw_stats = {}
+    for topo in topologies:
+        df_topo = baseline_data[baseline_data["topology"] == topo]
+        for node in df_topo["Node"].unique():
+            role = df_topo[df_topo["Node"] == node]["role"].iloc[0]
+            feats = ROLE_DETECT_FEATURES[role]
+            node_data = df_topo[df_topo["Node"] == node]
+            raw_stats[(topo, node)] = {
+                "role": role,
+                "feats": {}
+            }
+            for f in feats:
+                mu    = node_data[f].mean()
+                sigma = node_data[f].std()
+                raw_stats[(topo, node)]["feats"][f] = {
+                    "mu": mu, "sigma": sigma
+                }
+
+    peer_median_std = {}
+    for role, feats in ROLE_DETECT_FEATURES.items():
+        peer_median_std[role] = {}
+        for f in feats:
+            real_stds = [
+                v["feats"][f]["sigma"]
+                for v in raw_stats.values()
+                if v["role"] == role
+                and f in v["feats"]
+                and v["feats"][f]["sigma"] >= MIN_STD_FLOOR
+            ]
+            if real_stds:
+                peer_median_std[role][f] = float(np.median(real_stds))
+            else:
+                peer_median_std[role][f] = MIN_STD_FLOOR
+            print(f"  Peer median std — {role} {f}: "
+                  f"{peer_median_std[role][f]:.4f} "
+                  f"(from {len(real_stds)} nodes with real variance)")
+
+    print(f"\n  {'Topo':<10} {'Node':>5} {'Role':<10} {'Feature':<22} "
+          f"{'mu':>7} {'sigma':>7} {'floored':>8} {'direction'}")
+    print("  " + "-" * 80)
+
+    baselines = {}
+    for (topo, node), info in raw_stats.items():
+        role  = info["role"]
+        stats = {}
+        for f, fstats in info["feats"].items():
+            mu    = fstats["mu"]
+            sigma = fstats["sigma"]
+            floored = False
+
+            if sigma < MIN_STD_FLOOR:
+                sigma   = peer_median_std[role][f]
+                floored = True
+
+            if mu > 0.95:
+                direction = "down"
+            elif mu < 0.05:
+                direction = "up"
+            else:
+                direction = "both"
+
+            stats[f] = {
+                "mu":        mu,
+                "sigma":     sigma,
+                "direction": direction,
+            }
+            print(f"  {topo:<10} {node:>5} {role:<10} {f:<22} "
+                  f"{mu:>7.4f} {sigma:>7.4f} "
+                  f"{'YES' if floored else 'no':>8} {direction}")
+
+        baselines[(topo, node)] = {"role": role, "stats": stats}
+
+    return baselines
+
+
+def run_detector(df_input, baselines,
+                 z_thresh=Z_THRESHOLD, persist=PERSIST_WINDOW):
+    results = []
+    missing_keys = []
+
+    for topo in df_input["topology"].unique():
+        for node in df_input[df_input["topology"] == topo]["Node"].unique():
+            key = (topo, node)
+            if key not in baselines:
+                missing_keys.append(key)
+                continue
+
+            role  = baselines[key]["role"]
+            stats = baselines[key]["stats"]
+            feats = ROLE_DETECT_FEATURES[role]
+
+            for scenario in SCENARIOS:
+                node_data = df_input[
+                    (df_input["topology"] == topo) &
+                    (df_input["Node"] == node) &
+                    (df_input["scenario"] == scenario)
+                ].sort_values("Time").copy()
+
+                if len(node_data) < 2:
+                    continue
+
+                z = pd.DataFrame(index=node_data.index)
+                for feat in feats:
+                    mu        = stats[feat]["mu"]
+                    sigma     = stats[feat]["sigma"]
+                    direction = stats[feat]["direction"]
+
+                    signed_z = (node_data[feat] - mu) / sigma
+
+                    if direction == "down":
+                        z[feat] = (-signed_z).clip(lower=0)
+                    elif direction == "up":
+                        z[feat] = signed_z.clip(lower=0)
+                    else:
+                        z[feat] = signed_z.abs()
+
+                node_data["z_mean"] = z.mean(axis=1)
+                flagged = (node_data["z_mean"] > z_thresh).astype(int)
+                persist_score = (
+                    flagged.rolling(persist, min_periods=1).sum() / persist
+                )
+                node_data["anomaly_score"] = (persist_score * 100).clip(0, 100)
+                results.append(node_data)
+
+    if missing_keys:
+        print(f"WARNING: no baseline for {len(missing_keys)} pairs: "
+              f"{missing_keys[:5]}...")
+
+    return pd.concat(results, ignore_index=True)
+
+
+# ── Global LOO model ──────────────────────────────────────────────────────────
+
+train_normal = pd.read_csv(PROCESSED_DIR / "train_normal.csv")
+print(f"train_normal: {train_normal.shape}\n")
+
+print("Building leave-one-out global baselines...\n")
+global_scored_parts = []
+
+for target_topo in TOPOLOGIES:
+    training_topos = [t for t in TOPOLOGIES if t != target_topo]
+    print(f"\nTarget: {target_topo} | Training on: {training_topos}")
+
+    loo_baselines = compute_baseline_stats(train_normal, training_topos)
+
+    df_target_normal = train_normal[train_normal["topology"] == target_topo]
+
+    target_baselines = {}
+    for node in df_target_normal["Node"].unique():
+        role = df_target_normal[
+            df_target_normal["Node"] == node
+        ]["role"].iloc[0]
+
+        peer_stats_list = [
+            v["stats"] for (topo, n), v in loo_baselines.items()
+            if v["role"] == role
+        ]
+        if not peer_stats_list:
+            continue
+
+        merged_stats = {}
+        for f in ROLE_DETECT_FEATURES[role]:
+            mus       = [s[f]["mu"]    for s in peer_stats_list if f in s]
+            sigmas    = [s[f]["sigma"] for s in peer_stats_list if f in s]
+            dirs      = [s[f]["direction"] for s in peer_stats_list if f in s]
+            if not mus:
+                continue
+            avg_mu    = float(np.mean(mus))
+            avg_sigma = float(np.mean(sigmas))
+            direction = max(set(dirs), key=dirs.count)
+            merged_stats[f] = {
+                "mu": avg_mu, "sigma": avg_sigma, "direction": direction
+            }
+
+        target_baselines[(target_topo, node)] = {
+            "role": role, "stats": merged_stats
+        }
+
+    scored_topo = run_detector(
+        full[full["topology"] == target_topo],
+        target_baselines
+    )
+    scored_topo["model"] = "global_loo"
+    global_scored_parts.append(scored_topo)
+
+full_scored = pd.concat(global_scored_parts, ignore_index=True)
+full_scored["model"] = "global_loo"
+
+print(f"\nGlobal LOO scored dataset: {full_scored.shape}")
+print("\nAnomaly score distribution by scenario:")
+print(full_scored.groupby("scenario")["anomaly_score"].describe().round(2))
+
+print("\nAnomaly score by role × scenario:")
+print(
+    full_scored.groupby(["role", "scenario"])["anomaly_score"]
+    .mean().round(2).unstack()
+)
+
+print(f"\nBefore/after t={ATTACK_START} — Global LOO model:")
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        g = full_scored[
+            (full_scored["topology"] == topo) &
+            (full_scored["scenario"] == attack)
+        ]
+        pre  = g[g["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        post = g[g["Time"] >= ATTACK_START]["anomaly_score"].mean()
+        print(f"  {topo}-{attack}: pre={pre:.1f}  post={post:.1f}  "
+              f"lift={post-pre:.1f}")
+
+# ── Label vs score analysis ───────────────────────────────────────────────────
+
+print("Anomaly score by ground-truth label:")
+print(full_scored.groupby("label")["anomaly_score"].describe().round(2))
+
+print(f"\nBefore/after t={ATTACK_START} for each topology-attack:")
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        grp = full_scored[
+            (full_scored["topology"] == topo) &
+            (full_scored["scenario"] == attack)
+        ]
+        pre  = grp[grp["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        post = grp[grp["Time"] >= ATTACK_START]["anomaly_score"].mean()
+        lift = post - pre
+        print(f"  {topo}-{attack}: pre={pre:.1f}  post={post:.1f}  lift={lift:.1f}")
+
+print("\nNOTE: IFA lift is partially confounded by ConsumerCbr vs Zipf-Mandelbrot"
+      " baseline mismatch (see scenarios_info.md). Treat IFA and CP lift"
+      " numbers as not directly comparable.")
+
+# ── Score timeseries plot ─────────────────────────────────────────────────────
+
+fig, axes = plt.subplots(3, 2, figsize=(16, 13))
+
+for row, topo in enumerate(TOPOLOGIES):
+    for col, attack in enumerate(["ifa", "cp"]):
+        ax = axes[row][col]
+
+        norm_ts = full_scored[
+            (full_scored["topology"] == topo) &
+            (full_scored["scenario"] == "normal")
+        ].groupby("Time")["anomaly_score"]
+        norm_mean = norm_ts.mean()
+        norm_std  = norm_ts.std()
+
+        ax.fill_between(norm_mean.index,
+                         (norm_mean - norm_std).clip(0),
+                         (norm_mean + norm_std).clip(0, 100),
+                         alpha=0.15, color=SCENARIO_COLORS["normal"],
+                         label="Normal ±1σ band")
+        ax.plot(norm_mean.index, norm_mean.values,
+                color=SCENARIO_COLORS["normal"],
+                linewidth=1.0, alpha=0.6, linestyle="--")
+
+        atk_ts = full_scored[
+            (full_scored["topology"] == topo) &
+            (full_scored["scenario"] == attack)
+        ].groupby("Time")["anomaly_score"].mean()
+
+        ax.plot(atk_ts.index, atk_ts.values,
+                color=SCENARIO_COLORS[attack],
+                linewidth=1.5, label=attack.upper())
+
+        ax.axvline(ATTACK_START, color="black", linestyle="--",
+                   linewidth=1.0, label=f"Attack start (t={ATTACK_START})")
+        ax.axhline(ALARM_THRESHOLD, color="orange", linestyle=":",
+                   linewidth=1.0, label=f"Alarm threshold ({ALARM_THRESHOLD})")
+        ax.fill_between(atk_ts.index, atk_ts.values, ALARM_THRESHOLD,
+                        where=(atk_ts.values > ALARM_THRESHOLD),
+                        alpha=0.25, color=SCENARIO_COLORS[attack])
+
+        ax.set_title(f"{topo.upper()} — {attack.upper()}", fontsize=10)
+        ax.set_ylim(0, 105)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Anomaly Score")
+        ax.legend(fontsize=7, loc="upper left")
+
+fig.suptitle("Anomaly Score Over Time — Per-Node Z-Score Detector\n(mean across all nodes)",
+             fontsize=12, fontweight="bold")
+plt.tight_layout()
+plt.savefig(FIG_DIR / "fig_score_timeseries.png", bbox_inches="tight")
+plt.show()
+print("Saved fig_score_timeseries.png")
+
+# ── Per-node bar plot ─────────────────────────────────────────────────────────
+
+def plot_pernode_heatmap(topo, attack):
+    grp = full_scored[
+        (full_scored["topology"]==topo) &
+        (full_scored["scenario"]==attack) &
+        (full_scored["Time"] > 300)
+    ]
+    nodes         = sorted(grp["Node"].unique())
+    node_scores   = grp.groupby("Node")["anomaly_score"].mean()
+    roles         = full_scored[full_scored["topology"]==topo].groupby("Node")["role"].first()
+
+    fig, ax = plt.subplots(figsize=(10, 3))
+    colors = [ROLE_COLORS[roles[n]] for n in nodes]
+    bars   = ax.bar(range(len(nodes)), [node_scores.get(n, 0) for n in nodes],
+                    color=colors, edgecolor="white", linewidth=0.8)
+
+    ax.axhline(ALARM_THRESHOLD, color="orange", linestyle=":",
+               linewidth=1.2, label=f"Alarm threshold ({ALARM_THRESHOLD})")
+    ax.set_xticks(range(len(nodes)))
+    ax.set_xticklabels(nodes, fontsize=9)
+    ax.set_ylim(0, 110)
+    ax.set_ylabel("Mean Anomaly Score (t>300)")
+    ax.set_title(f"{topo.upper()} — {attack.upper()}: Per-Node Mean Score After Attack Start")
+
+    legend_handles = [
+        Patch(facecolor=ROLE_COLORS["consumer"], label="Consumer"),
+        Patch(facecolor=ROLE_COLORS["router"],   label="Router"),
+        mpatches.Patch(facecolor="none", edgecolor="orange",
+                       linestyle=":", label=f"Alarm ({ALARM_THRESHOLD})")
+    ]
+    ax.legend(handles=legend_handles, fontsize=8)
+    plt.tight_layout()
+    fname = FIG_DIR / f"fig_pernode_scores_{topo}_{attack}.png"
+    plt.savefig(fname, bbox_inches="tight")
+    plt.show()
+    print(f"Saved {fname.name}")
+
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        plot_pernode_heatmap(topo, attack)
+
+# ── Detection latency ─────────────────────────────────────────────────────────
+
+latency_rows = []
+
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        for node in full_scored[full_scored["topology"] == topo]["Node"].unique():
+            grp = full_scored[
+                (full_scored["topology"] == topo) &
+                (full_scored["scenario"] == attack) &
+                (full_scored["Node"] == node)
+            ].sort_values("Time")
+
+            post = grp[grp["Time"] >= ATTACK_START]
+            alarm_times = post[post["anomaly_score"] > ALARM_THRESHOLD]["Time"]
+
+            if len(alarm_times) > 0:
+                first_alarm = int(alarm_times.iloc[0])
+                latency = first_alarm - ATTACK_START
+                if latency < (PERSIST_WINDOW - 1):
+                    print(f"  WARNING: {topo}-{attack} node {node} latency={latency}s "
+                          f"is below persistence window floor ({PERSIST_WINDOW-1}s). "
+                          f"Check time alignment.")
+                detected = True
+            else:
+                latency  = None
+                detected = False
+
+            role = grp["role"].iloc[0] if len(grp) > 0 else "unknown"
+            latency_rows.append({
+                "topology":  topo,
+                "attack":    attack,
+                "node":      node,
+                "role":      role,
+                "detected":  detected,
+                "latency_s": latency
+            })
+
+df_latency = pd.DataFrame(latency_rows)
+
+print("Detection rate and mean latency by topology-attack:")
+summary = df_latency.groupby(["topology", "attack"]).agg(
+    detection_rate  = ("detected",  "mean"),
+    mean_latency_s  = ("latency_s", "mean"),
+    min_latency_s   = ("latency_s", "min"),
+    nodes_detected  = ("detected",  "sum"),
+    total_nodes     = ("detected",  "count")
+).round(2)
+print(summary.to_string())
+
+df_latency.to_csv(PROCESSED_DIR / "detection_latency.csv", index=False)
+print("\nSaved detection_latency.csv")
+
+# ── Latency scatter plot ──────────────────────────────────────────────────────
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+for col, attack in enumerate(["ifa", "cp"]):
+    ax = axes[col]
+    df_atk = df_latency[df_latency["attack"]==attack]
+
+    for ti, topo in enumerate(TOPOLOGIES):
+        df_t = df_atk[(df_atk["topology"]==topo) & (df_atk["detected"]==True)]
+        if df_t.empty:
+            continue
+        ax.scatter(
+            [ti] * len(df_t),
+            df_t["latency_s"],
+            c=[ROLE_COLORS[r] for r in df_t["role"]],
+            s=80, alpha=0.8, zorder=3
+        )
+        ax.hlines(df_t["latency_s"].mean(), ti - 0.3, ti + 0.3,
+                  colors="black", linewidth=2, zorder=4)
+
+    ax.set_xticks(range(len(TOPOLOGIES)))
+    ax.set_xticklabels([t.upper() for t in TOPOLOGIES])
+    ax.set_ylabel("Detection Latency (seconds after t=300)")
+    ax.set_title(f"{attack.upper()} — Detection Latency per Node")
+    ax.grid(axis="y", alpha=0.3)
+
+    legend_handles = [
+        Patch(facecolor=ROLE_COLORS["consumer"], label="Consumer"),
+        Patch(facecolor=ROLE_COLORS["router"],   label="Router"),
+    ]
+    ax.legend(handles=legend_handles, fontsize=8)
+
+plt.suptitle("Detection Latency After Attack Start (t=300)",
+             fontsize=11, fontweight="bold")
+plt.tight_layout()
+plt.savefig(FIG_DIR / "fig_detection_latency.png", bbox_inches="tight")
+plt.show()
+print("Saved fig_detection_latency.png")
+
+# ── Per-topology model ────────────────────────────────────────────────────────
+
+print("Building per-topology baselines...\n")
+pertopo_parts = []
+
+for topo in TOPOLOGIES:
+    pt_baselines = compute_baseline_stats(train_normal, [topo])
+    df_t = run_detector(full[full["topology"] == topo], pt_baselines)
+    df_t["model"] = "per_topology"
+    pertopo_parts.append(df_t)
+    print(f"  {topo}: scored {df_t.shape[0]} rows")
+
+full_pertopo = pd.concat(pertopo_parts, ignore_index=True)
+
+print(f"\nAnomaly score by role × scenario (per-topology model):")
+print(
+    full_pertopo.groupby(["role", "scenario"])["anomaly_score"]
+    .mean().round(2).unstack()
+)
+
+print(f"\nBefore/after t={ATTACK_START} — Global LOO vs Per-Topology:")
+print(f"{'Topology-Attack':<20} {'LOO pre':>8} {'LOO post':>10} "
+      f"{'PT pre':>8} {'PT post':>10} {'Lift LOO':>10} {'Lift PT':>8}")
+print("-" * 82)
+
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        g = full_scored[
+            (full_scored["topology"] == topo) &
+            (full_scored["scenario"] == attack)
+        ]
+        p = full_pertopo[
+            (full_pertopo["topology"] == topo) &
+            (full_pertopo["scenario"] == attack)
+        ]
+        g_pre  = g[g["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        g_post = g[g["Time"] >= ATTACK_START]["anomaly_score"].mean()
+        p_pre  = p[p["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        p_post = p[p["Time"] >= ATTACK_START]["anomaly_score"].mean()
+
+        print(f"{topo}-{attack:<15} "
+              f"{g_pre:>8.1f} {g_post:>10.1f} "
+              f"{p_pre:>8.1f} {p_post:>10.1f} "
+              f"{g_post-g_pre:>10.1f} {p_post-p_pre:>8.1f}")
+
+# ── Score distribution comparison plot ───────────────────────────────────────
+
+fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+fig.suptitle("Score Distributions: Global vs Per-Topology Model",
+             fontsize=12, fontweight="bold")
+
+bins = np.linspace(0, 100, 41)
+
+for col, topo in enumerate(TOPOLOGIES):
+    for row, (scored_df, model_name) in enumerate([
+        (full_scored,  "Global Model"),
+        (full_pertopo, "Per-Topology Model")
+    ]):
+        ax = axes[row][col]
+
+        for scenario, color in SCENARIO_COLORS.items():
+            vals = scored_df[
+                (scored_df["topology"]==topo) &
+                (scored_df["scenario"]==scenario)
+            ]["anomaly_score"]
+            ax.hist(vals, bins=bins, alpha=0.5, color=color,
+                    density=True, label=scenario.upper())
+
+        ax.axvline(ALARM_THRESHOLD, color="orange", linestyle="--",
+                   linewidth=1.2, label=f"Threshold ({ALARM_THRESHOLD})")
+        ax.set_title(f"{topo.upper()} — {model_name}", fontsize=9)
+        ax.set_xlabel("Anomaly Score")
+        ax.set_ylabel("Density")
+        ax.legend(fontsize=7)
+
+plt.tight_layout()
+plt.savefig(FIG_DIR / "fig_score_dist_comparison.png", bbox_inches="tight")
+plt.show()
+print("Saved fig_score_dist_comparison.png")
+
+# ── Timeline comparison plot ──────────────────────────────────────────────────
+
+fig, axes = plt.subplots(3, 2, figsize=(16, 13))
+fig.suptitle("Anomaly Score Timeline: Global vs Per-Topology Model",
+             fontsize=12, fontweight="bold")
+
+for row, topo in enumerate(TOPOLOGIES):
+    for col, attack in enumerate(["ifa", "cp"]):
+        ax = axes[row][col]
+
+        g_ts = full_scored[
+            (full_scored["topology"]==topo) &
+            (full_scored["scenario"]==attack)
+        ].groupby("Time")["anomaly_score"].mean()
+
+        p_ts = full_pertopo[
+            (full_pertopo["topology"]==topo) &
+            (full_pertopo["scenario"]==attack)
+        ].groupby("Time")["anomaly_score"].mean()
+
+        ax.plot(g_ts.index, g_ts.values,
+                color="#3498db", linewidth=1.5,
+                label="Global model", alpha=0.9)
+        ax.plot(p_ts.index, p_ts.values,
+                color="#e74c3c", linewidth=1.5,
+                label="Per-topology model", alpha=0.9)
+
+        ax.axvline(300, color="black", linestyle="--",
+                   linewidth=1.0, label="Attack start")
+        ax.axhline(ALARM_THRESHOLD, color="orange", linestyle=":",
+                   linewidth=1.0, label=f"Threshold ({ALARM_THRESHOLD})")
+
+        ax.set_title(f"{topo.upper()} — {attack.upper()}", fontsize=10)
+        ax.set_ylim(0, 105)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Anomaly Score")
+        ax.legend(fontsize=7, loc="upper left")
+
+plt.tight_layout()
+plt.savefig(FIG_DIR / "fig_timeseries_comparison.png", bbox_inches="tight")
+plt.show()
+print("Saved fig_timeseries_comparison.png")
+
+# ── Per-node detection rate comparison ───────────────────────────────────────
+
+def pernode_detection_rate(scored_df, topo, attack, threshold=ALARM_THRESHOLD):
+    grp = scored_df[
+        (scored_df["topology"]==topo) &
+        (scored_df["scenario"]==attack) &
+        (scored_df["Time"] > 300)
+    ]
+    return grp.groupby("Node").apply(
+        lambda x: (x["anomaly_score"] > threshold).mean()
+    )
+
+fig, axes = plt.subplots(3, 2, figsize=(16, 13))
+fig.suptitle("Per-Node Detection Rate (t>300): Global vs Per-Topology",
+             fontsize=12, fontweight="bold")
+
+for row, topo in enumerate(TOPOLOGIES):
+    nodes = sorted(full[full["topology"]==topo]["Node"].unique())
+    roles = full[full["topology"]==topo].groupby("Node")["role"].first()
+    x     = np.arange(len(nodes))
+    width = 0.35
+
+    for col, attack in enumerate(["ifa", "cp"]):
+        ax = axes[row][col]
+
+        g_rates = pernode_detection_rate(full_scored,  topo, attack)
+        p_rates = pernode_detection_rate(full_pertopo, topo, attack)
+
+        g_vals = [g_rates.get(n, 0) for n in nodes]
+        p_vals = [p_rates.get(n, 0) for n in nodes]
+        colors = [ROLE_COLORS[roles[n]] for n in nodes]
+
+        ax.bar(x - width/2, g_vals, width, color=colors,
+               alpha=0.6, label="Global", edgecolor="none")
+        ax.bar(x + width/2, p_vals, width, color=colors,
+               alpha=0.95, label="Per-topology",
+               edgecolor="#333", linewidth=0.6, hatch="//")
+
+        ax.axhline(0.5, color="gray", linestyle="--",
+                   linewidth=0.8, alpha=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels(nodes, fontsize=8)
+        ax.set_ylim(0, 1.15)
+        ax.set_ylabel("Detection Rate")
+        ax.set_title(f"{topo.upper()} — {attack.upper()}", fontsize=9)
+
+        legend_handles = [
+            Patch(facecolor="#aaa", alpha=0.6,  label="Global"),
+            Patch(facecolor="#aaa", alpha=0.95, hatch="//", label="Per-topology"),
+            Patch(facecolor=ROLE_COLORS["consumer"], label="Consumer"),
+            Patch(facecolor=ROLE_COLORS["router"],   label="Router"),
+        ]
+        ax.legend(handles=legend_handles, fontsize=7, loc="upper right")
+
+plt.tight_layout()
+plt.savefig(FIG_DIR / "fig_pernode_detection_comparison.png", bbox_inches="tight")
+plt.show()
+print("Saved fig_pernode_detection_comparison.png")
+
+# ── Save scored CSVs and final summary ───────────────────────────────────────
+
+full_scored.to_csv(PROCESSED_DIR / "full_scored_global.csv", index=False)
+full_pertopo.to_csv(PROCESSED_DIR / "full_scored_pertopo.csv", index=False)
+print("Saved full_scored_global.csv")
+print("Saved full_scored_pertopo.csv")
+
+print("\n" + "="*75)
+print("DETECTION SUMMARY — Temporal Lift (post - pre attack start)")
+print("="*75)
+print(f"{'Topology-Attack':<20} {'Global pre':>10} {'Global post':>12} "
+      f"{'PerTopo pre':>12} {'PerTopo post':>13}")
+print("-"*75)
+
+for topo in TOPOLOGIES:
+    for attack in ["ifa", "cp"]:
+        g = full_scored[ (full_scored["topology"]==topo)  & (full_scored["scenario"]==attack)]
+        p = full_pertopo[(full_pertopo["topology"]==topo) & (full_pertopo["scenario"]==attack)]
+
+        g_pre  = g[g["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        g_post = g[g["Time"] >= ATTACK_START]["anomaly_score"].mean()
+        p_pre  = p[p["Time"] <  ATTACK_START]["anomaly_score"].mean()
+        p_post = p[p["Time"] >= ATTACK_START]["anomaly_score"].mean()
+
+        print(f"{topo}-{attack:<15} {g_pre:>10.1f} {g_post:>12.1f} "
+              f"{p_pre:>12.1f} {p_post:>13.1f}")
+
+print("\n" + "="*75)
+print("METHOD: Per-node static baseline z-score with persistence filter")
+print(f"  Features         : {DETECT_FEATURES}")
+print(f"  Baseline source  : train_normal.csv (normal scenario only, first {BASELINE_WINDOW}s)")
+print(f"  Z threshold      : {Z_THRESHOLD}")
+print(f"  Persistence      : {PERSIST_WINDOW} consecutive steps")
+print(f"  Alarm threshold  : anomaly_score > {ALARM_THRESHOLD}")
+print(f"  Attack boundary  : t >= {ATTACK_START} (GT shift-corrected)")
+print("="*75)
+
+print("\n" + "="*75)
+print("KNOWN CONFOUNDS (from scenarios_info.md)")
+print("="*75)
+print("1. IFA scenarios use ConsumerCbr for legitimate traffic; normal baseline")
+print("   was built from Zipf-Mandelbrot traffic. IFA lift includes a component")
+print("   from this distributional difference, not purely the attack signal.")
+print("   Do not compare IFA and CP lift values as if they are on the same scale.")
+print("2. In CP scenarios, attacker nodes (c1, c6/c3) simultaneously run")
+print("   legitimate and attack apps. Their per-node anomaly scores reflect")
+print("   mixed traffic and cannot be cleanly attributed to attack detection alone.")

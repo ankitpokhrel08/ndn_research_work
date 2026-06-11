@@ -1,0 +1,1228 @@
+# ndnSIM Simulation Scenarios
+
+All source code for the nine ndnSIM simulation scenarios across three topologies (DFN, Dumbbell, Tree) and three traffic conditions (Normal, IFA attack, CP attack).
+
+---
+
+## DFN Topology
+
+### dfn-normal.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime = 600.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime", "Simulation time in seconds", simTime);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  // Standard 10ms links (same as tree)
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  // DFN extra cross-links at 15ms — this is the only difference from tree
+  PointToPointHelper p2p15;
+  p2p15.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p15.SetChannelAttribute("Delay", StringValue("15ms"));
+
+  p2p15.Install(r1, r4);
+  p2p15.Install(r2, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dfn-normal-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dfn-normal-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dfn-normal-app-delays.txt");
+
+  std::ofstream gt("results/dfn-normal-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << ",normal\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### dfn-ifa.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include "blackhole-producer.hpp"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime     = 600.0;
+  double attackStart = 300.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  PointToPointHelper p2p15;
+  p2p15.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p15.SetChannelAttribute("Delay", StringValue("15ms"));
+  p2p15.Install(r1, r4);
+  p2p15.Install(r2, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+
+  // Non-responding producer for /evil attack prefix
+  ns3::ndn::AppHelper blackhole("ns3::ndn::BlackholeProducer");
+  blackhole.SetAttribute("Prefix", StringValue("/evil"));
+  blackhole.Install(p1);
+  blackhole.Install(p2);
+  grHelper.AddOrigins("/evil", p1);
+  grHelper.AddOrigins("/evil", p2);
+
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  // IFA from c1 after attackStart
+  ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+  atk1.SetAttribute("Prefix", StringValue("/evil/fake/video"));
+  atk1.SetAttribute("Frequency", StringValue("40"));
+  atk1.SetAttribute("LifeTime", StringValue("2s"));
+  auto a1 = atk1.Install(c1);
+  a1.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+  atk2.SetAttribute("Prefix", StringValue("/evil/random-attack"));
+  atk2.SetAttribute("Frequency", StringValue("30"));
+  atk2.SetAttribute("LifeTime", StringValue("1500ms"));
+  auto a2 = atk2.Install(c1);
+  a2.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk3("ns3::ndn::ConsumerCbr");
+  atk3.SetAttribute("Prefix", StringValue("/evil/fake/image"));
+  atk3.SetAttribute("Frequency", StringValue("20"));
+  atk3.SetAttribute("LifeTime", StringValue("1s"));
+  auto a3 = atk3.Install(c1);
+  a3.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk4("ns3::ndn::ConsumerCbr");
+  atk4.SetAttribute("Prefix", StringValue("/evil/random-attack-2"));
+  atk4.SetAttribute("Frequency", StringValue("10"));
+  atk4.SetAttribute("LifeTime", StringValue("4s"));
+  auto a4 = atk4.Install(c1);
+  a4.Start(Seconds(attackStart));
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dfn-ifa-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dfn-ifa-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dfn-ifa-app-delays.txt");
+
+  std::ofstream gt("results/dfn-ifa-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "ifa") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### dfn-cp.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime     = 600.0;
+  double attackStart = 300.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  PointToPointHelper p2p15;
+  p2p15.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p15.SetChannelAttribute("Delay", StringValue("15ms"));
+  p2p15.Install(r1, r4);
+  p2p15.Install(r2, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  // CP attack: 100 distinct junk names from c1 and c6
+  for (int i = 0; i < 50; i++) {
+    ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+    atk1.SetAttribute("Prefix", StringValue("/ndn/junk/a" + std::to_string(i)));
+    atk1.SetAttribute("Frequency", StringValue("2"));
+    auto a1 = atk1.Install(c1);
+    a1.Start(Seconds(attackStart));
+
+    ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+    atk2.SetAttribute("Prefix", StringValue("/ndn/junk/b" + std::to_string(i)));
+    atk2.SetAttribute("Frequency", StringValue("2"));
+    auto a2 = atk2.Install(c6);
+    a2.Start(Seconds(attackStart));
+  }
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dfn-cp-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dfn-cp-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dfn-cp-app-delays.txt");
+
+  std::ofstream gt("results/dfn-cp-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "cp") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+## Dumbbell Topology
+
+### dumbbell-normal.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime = 600.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime", "Simulation time in seconds", simTime);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  // Dumbbell has a dedicated bottleneck node — 3 consumers, 4 routers+bottleneck, 2 producers
+  NodeContainer consumers, producers;
+  consumers.Create(3);   // c1, c2, c3
+  producers.Create(2);   // p1, p2
+
+  // r1, r2 on consumer side; bottleneck; r3, r4 on producer side
+  NodeContainer leftRouters, rightRouters, bottleneckContainer;
+  leftRouters.Create(2);
+  bottleneckContainer.Create(1);
+  rightRouters.Create(2);
+
+  NodeContainer allNodes;
+  allNodes.Add(consumers);
+  allNodes.Add(leftRouters);
+  allNodes.Add(bottleneckContainer);
+  allNodes.Add(rightRouters);
+  allNodes.Add(producers);
+
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> r1 = leftRouters.Get(0);
+  Ptr<Node> r2 = leftRouters.Get(1);
+  Ptr<Node> bn = bottleneckContainer.Get(0); // bottleneck
+  Ptr<Node> r3 = rightRouters.Get(0);
+  Ptr<Node> r4 = rightRouters.Get(1);
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+
+  // Standard links
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(c1, r1);
+  p2p.Install(c2, r1);
+  p2p.Install(c3, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r3, r4);
+  p2p.Install(r3, p1);
+  p2p.Install(r4, p2);
+
+  // Bottleneck links
+  PointToPointHelper bottleneckLink;
+  bottleneckLink.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  bottleneckLink.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  bottleneckLink.Install(r2, bn);
+  bottleneckLink.Install(bn, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dumbbell-normal-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dumbbell-normal-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dumbbell-normal-app-delays.txt");
+
+  std::ofstream gt("results/dumbbell-normal-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << ",normal\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### dumbbell-ifa.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include "blackhole-producer.hpp"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime     = 600.0;
+  double attackStart = 300.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer consumers, producers;
+  consumers.Create(3);
+  producers.Create(2);
+
+  NodeContainer leftRouters, rightRouters, bottleneckContainer;
+  leftRouters.Create(2);
+  bottleneckContainer.Create(1);
+  rightRouters.Create(2);
+
+  NodeContainer allNodes;
+  allNodes.Add(consumers);
+  allNodes.Add(leftRouters);
+  allNodes.Add(bottleneckContainer);
+  allNodes.Add(rightRouters);
+  allNodes.Add(producers);
+
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> r1 = leftRouters.Get(0);
+  Ptr<Node> r2 = leftRouters.Get(1);
+  Ptr<Node> bn = bottleneckContainer.Get(0);
+  Ptr<Node> r3 = rightRouters.Get(0);
+  Ptr<Node> r4 = rightRouters.Get(1);
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(c1, r1);
+  p2p.Install(c2, r1);
+  p2p.Install(c3, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r3, r4);
+  p2p.Install(r3, p1);
+  p2p.Install(r4, p2);
+
+  PointToPointHelper bottleneckLink;
+  bottleneckLink.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  bottleneckLink.SetChannelAttribute("Delay", StringValue("10ms"));
+  bottleneckLink.Install(r2, bn);
+  bottleneckLink.Install(bn, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+
+  // Non-responding producer for /evil attack prefix
+  ns3::ndn::AppHelper blackhole("ns3::ndn::BlackholeProducer");
+  blackhole.SetAttribute("Prefix", StringValue("/evil"));
+  blackhole.Install(p1);
+  blackhole.Install(p2);
+  grHelper.AddOrigins("/evil", p1);
+  grHelper.AddOrigins("/evil", p2);
+
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+
+  // IFA: c1 floods fake interests across the bottleneck
+  // This is the key stress point for dumbbell — all fake traffic
+  // must traverse r2->bn->r3 competing with legitimate traffic
+
+  ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+  atk1.SetAttribute("Prefix", StringValue("/evil/fake/video"));
+  atk1.SetAttribute("Frequency", StringValue("40"));
+  atk1.SetAttribute("LifeTime", StringValue("2s"));
+  auto a1 = atk1.Install(c1);
+  a1.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+  atk2.SetAttribute("Prefix", StringValue("/evil/random-attack"));
+  atk2.SetAttribute("Frequency", StringValue("30"));
+  atk2.SetAttribute("LifeTime", StringValue("1500ms"));
+  auto a2 = atk2.Install(c1);
+  a2.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk3("ns3::ndn::ConsumerCbr");
+  atk3.SetAttribute("Prefix", StringValue("/evil/fake/image"));
+  atk3.SetAttribute("Frequency", StringValue("20"));
+  atk3.SetAttribute("LifeTime", StringValue("1s"));
+  auto a3 = atk3.Install(c1);
+  a3.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk4("ns3::ndn::ConsumerCbr");
+  atk4.SetAttribute("Prefix", StringValue("/evil/random-attack-2"));
+  atk4.SetAttribute("Frequency", StringValue("10"));
+  atk4.SetAttribute("LifeTime", StringValue("4s"));
+  auto a4 = atk4.Install(c1);
+  a4.Start(Seconds(attackStart));
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dumbbell-ifa-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dumbbell-ifa-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dumbbell-ifa-app-delays.txt");
+
+  std::ofstream gt("results/dumbbell-ifa-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "ifa") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### dumbbell-cp.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime     = 600.0;
+  double attackStart = 300.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer consumers, producers;
+  consumers.Create(3);
+  producers.Create(2);
+
+  NodeContainer leftRouters, rightRouters, bottleneckContainer;
+  leftRouters.Create(2);
+  bottleneckContainer.Create(1);
+  rightRouters.Create(2);
+
+  NodeContainer allNodes;
+  allNodes.Add(consumers);
+  allNodes.Add(leftRouters);
+  allNodes.Add(bottleneckContainer);
+  allNodes.Add(rightRouters);
+  allNodes.Add(producers);
+
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> r1 = leftRouters.Get(0);
+  Ptr<Node> r2 = leftRouters.Get(1);
+  Ptr<Node> bn = bottleneckContainer.Get(0);
+  Ptr<Node> r3 = rightRouters.Get(0);
+  Ptr<Node> r4 = rightRouters.Get(1);
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(c1, r1);
+  p2p.Install(c2, r1);
+  p2p.Install(c3, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r3, r4);
+  p2p.Install(r3, p1);
+  p2p.Install(r4, p2);
+
+  PointToPointHelper bottleneckLink;
+  bottleneckLink.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  bottleneckLink.SetChannelAttribute("Delay", StringValue("10ms"));
+  bottleneckLink.Install(r2, bn);
+  bottleneckLink.Install(bn, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+
+  // CP attack: c1 sends junk from consumer side across bottleneck
+  // Cache on bn and r3 gets polluted, hurting c2/c3 legitimate hits
+  for (int i = 0; i < 50; i++) {
+    ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+    atk1.SetAttribute("Prefix", StringValue("/ndn/junk/a" + std::to_string(i)));
+    atk1.SetAttribute("Frequency", StringValue("2"));
+    auto a1 = atk1.Install(c1);
+    a1.Start(Seconds(attackStart));
+
+    ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+    atk2.SetAttribute("Prefix", StringValue("/ndn/junk/b" + std::to_string(i)));
+    atk2.SetAttribute("Frequency", StringValue("2"));
+    auto a2 = atk2.Install(c3);
+    a2.Start(Seconds(attackStart));
+  }
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dumbbell-cp-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dumbbell-cp-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dumbbell-cp-app-delays.txt");
+
+  std::ofstream gt("results/dumbbell-cp-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "cp") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+## Tree Topology
+
+### tree-normal.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime = 600.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime", "Simulation time in seconds", simTime);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100); // consistent cache size across all scenarios
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  ns3::ndn::L3RateTracer::InstallAll("results/tree-normal-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/tree-normal-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/tree-normal-app-delays.txt");
+
+  // Ground truth: entire run is normal
+  std::ofstream gt("results/tree-normal-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << ",normal\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### tree-ifa.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include "blackhole-producer.hpp"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime = 600.0;
+  double attackStart = 300.0; // 5 min baseline, 5 min attack = balanced classes
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true); // deterministic routing, no flooding/loops
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+
+  // Non-responding producer for /evil, co-located on the real producers.
+  // Attack interests route here through the core and expire -> PIT pressure + timeouts.
+  ns3::ndn::AppHelper blackhole("ns3::ndn::BlackholeProducer");
+  blackhole.SetAttribute("Prefix", StringValue("/evil"));
+  blackhole.Install(p1);
+  blackhole.Install(p2);
+  grHelper.AddOrigins("/evil", p1);
+  grHelper.AddOrigins("/evil", p2);
+  // NOTE: no producerHelper for /evil — only the blackhole serves it
+
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  // Legitimate consumers — run entire simulation
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  // IFA: c1 becomes attacker at attackStart
+  // 4 fake prefixes with different lifetimes
+  // frequencies scaled proportionally (40:30:20:10)
+
+  ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+  atk1.SetAttribute("Prefix", StringValue("/evil/fake/video"));
+  atk1.SetAttribute("Frequency", StringValue("40"));
+  atk1.SetAttribute("LifeTime", StringValue("2s"));
+  auto a1 = atk1.Install(c1);
+  a1.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+  atk2.SetAttribute("Prefix", StringValue("/evil/random-attack"));
+  atk2.SetAttribute("Frequency", StringValue("30"));
+  atk2.SetAttribute("LifeTime", StringValue("1500ms"));
+  auto a2 = atk2.Install(c1);
+  a2.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk3("ns3::ndn::ConsumerCbr");
+  atk3.SetAttribute("Prefix", StringValue("/evil/fake/image"));
+  atk3.SetAttribute("Frequency", StringValue("20"));
+  atk3.SetAttribute("LifeTime", StringValue("1s"));
+  auto a3 = atk3.Install(c1);
+  a3.Start(Seconds(attackStart));
+
+  ns3::ndn::AppHelper atk4("ns3::ndn::ConsumerCbr");
+  atk4.SetAttribute("Prefix", StringValue("/evil/random-attack-2"));
+  atk4.SetAttribute("Frequency", StringValue("10"));
+  atk4.SetAttribute("LifeTime", StringValue("4s"));
+  auto a4 = atk4.Install(c1);
+  a4.Start(Seconds(attackStart));
+
+  ns3::ndn::L3RateTracer::InstallAll("results/tree-ifa-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/tree-ifa-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/tree-ifa-app-delays.txt");
+
+  std::ofstream gt("results/tree-ifa-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "ifa") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```
+
+---
+
+### tree-cp.cpp
+
+```cpp
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime     = 600.0;
+  double attackStart = 300.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime",     "Simulation time in seconds", simTime);
+  cmd.AddValue("attackStart", "Attack start time",          attackStart);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100); // small cache makes pollution more effective
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  // Both producers serve /ndn (stable routing)
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  // Legitimate consumers
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  // CP attack: 100 distinct unpopular names spread across c1 and c6
+  // sub-prefix of /ndn so producers will serve it (working approach)
+  for (int i = 0; i < 50; i++) {
+    ns3::ndn::AppHelper atk1("ns3::ndn::ConsumerCbr");
+    atk1.SetAttribute("Prefix", StringValue("/ndn/junk/a" + std::to_string(i)));
+    atk1.SetAttribute("Frequency", StringValue("2"));
+    auto a1 = atk1.Install(c1);
+    a1.Start(Seconds(attackStart));
+
+    ns3::ndn::AppHelper atk2("ns3::ndn::ConsumerCbr");
+    atk2.SetAttribute("Prefix", StringValue("/ndn/junk/b" + std::to_string(i)));
+    atk2.SetAttribute("Frequency", StringValue("2"));
+    auto a2 = atk2.Install(c6);
+    a2.Start(Seconds(attackStart));
+  }
+
+  ns3::ndn::L3RateTracer::InstallAll("results/tree-cp-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/tree-cp-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/tree-cp-app-delays.txt");
+
+  std::ofstream gt("results/tree-cp-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << "," << (t < attackStart ? "normal" : "cp") << "\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}
+```

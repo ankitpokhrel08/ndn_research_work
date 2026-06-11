@@ -1,0 +1,45 @@
+{
+  "features": [
+    "pit_size",
+    "pit_growth_rate",
+    "cs_size",
+    "cache_hit_ratio",
+    "satisfaction_ratio",
+    "unsatisfied_ratio",
+    "in_interests_rate",
+    "out_interests_rate",
+    "in_data_rate",
+    "nack_rate"
+  ],
+  "topology": "dumbbell",
+  "clip_bounds": {
+    "pit_size": {
+      "lo": 2.0,
+      "hi": 3.0
+    },
+    "pit_growth_rate": {
+      "lo": -0.32884830295312134,
+      "hi": 0.3288791693462554
+    },
+    "cs_size": {
+      "lo": 191.0,
+      "hi": 1127.0000000000036
+    },
+    "cache_hit_ratio": {
+      "lo": 0.0,
+      "hi": 0.16279069767441862
+    },
+    "in_interests_rate": {
+      "lo": 2.635585211934011,
+      "hi": 15.52066276340928
+    },
+    "out_interests_rate": {
+      "lo": 1.6448362897740714,
+      "hi": 7.612663962980527
+    },
+    "in_data_rate": {
+      "lo": 1.6428372035107464,
+      "hi": 7.9159782239753245
+    }
+  }
+}
