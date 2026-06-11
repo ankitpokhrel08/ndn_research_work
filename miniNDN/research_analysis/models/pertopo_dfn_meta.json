@@ -1,0 +1,41 @@
+{
+  "features": [
+    "pit_size",
+    "pit_growth_rate",
+    "cs_size",
+    "cache_hit_ratio",
+    "satisfaction_ratio",
+    "unsatisfied_ratio",
+    "in_interests_rate",
+    "out_interests_rate",
+    "in_data_rate",
+    "nack_rate"
+  ],
+  "topology": "dfn",
+  "clip_bounds": {
+    "pit_growth_rate": {
+      "lo": -0.32801531956483154,
+      "hi": 0.32805983417158585
+    },
+    "cs_size": {
+      "lo": 220.0,
+      "hi": 1260.0
+    },
+    "cache_hit_ratio": {
+      "lo": 0.0,
+      "hi": 0.16279069767441862
+    },
+    "in_interests_rate": {
+      "lo": 2.9603441659841825,
+      "hi": 15.816365887931463
+    },
+    "out_interests_rate": {
+      "lo": 1.651552724197556,
+      "hi": 8.232201888174686
+    },
+    "in_data_rate": {
+      "lo": 1.6425612265414355,
+      "hi": 8.56973779076536
+    }
+  }
+}

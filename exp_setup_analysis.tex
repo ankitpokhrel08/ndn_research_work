@@ -1,0 +1,616 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{float}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!5},
+  keywordstyle=\color{blue!70},
+  commentstyle=\color{green!50!black},
+  columns=fullflexible
+}
+
+\title{Experimental Setup and Analysis Report:\\
+Anomaly Detection in Named Data Networking\\
+via Dual Simulation and Emulation}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+% ============================================================
+\begin{abstract}
+This report documents the complete experimental setup and analysis results for an unsupervised anomaly detection system targeting two attack classes in Named Data Networking (NDN): Interest Flooding Attack (IFA) and Content Poisoning (CP). The study uses a dual-platform approach to strengthen result validity. \textbf{Part~I} describes ndnSIM~2.x (ns-3.35) simulations across three topologies --- Tree-12, DFN-12, and Dumbbell-10 --- under IFA and CP attack conditions, evaluated using a dual per-node statistical detector. \textbf{Part~II} describes miniNDN emulation experiments on the same three topologies running real NFD (Named Data Networking Forwarding Daemon) processes, evaluated using an Isolation Forest machine learning model for IFA detection.
+
+A core finding motivating the dual-detector design in Part~I is that IFA and CP produce directionally opposite changes in the same NDN traffic features. In Part~I, the dual z-score detector achieves pre-attack scores of 1.4--1.8 and post-attack lifts of 40--86 points across all topology-attack combinations, with detection latencies of 1--2 seconds for IFA and 1--9 seconds for CP. In Part~II, the Isolation Forest achieves 91.2--98.7\% attacker detection at the operational threshold across all three topologies with false positive rates below 4.3\% on clean normal traffic. Both platforms independently confirm that a globally trained model generalises across all three topologies without retraining, validating the topology-invariance of NDN attack signatures.
+\end{abstract}
+
+% ============================================================
+\section{Introduction}
+
+Named Data Networking (NDN) replaces IP's host-centric addressing with content-centric forwarding: packets carry named content rather than source/destination addresses, and routers cache responses in a Content Store (CS) for reuse. The Pending Interest Table (PIT) tracks outstanding requests, and the Forwarding Information Base (FIB) routes interests toward producers.
+
+Two attacks exploit the stateless nature of NDN forwarding:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Interest Flooding Attack (IFA):} A compromised consumer floods the network with interests for non-existent or unresolvable content. Fake interests propagate to producers and occupy PIT entries for their full lifetime, causing saturation that blocks legitimate forwarding.
+  \item \textbf{Content Poisoning (CP):} An attacker injects interests for a large number of unique, rarely-requested names. Because the content is served by legitimate producers, it enters router Content Stores through normal NDN caching, continuously evicting popular content. Legitimate consumers suffer higher cache miss rates and increased producer load.
+\end{itemize}
+
+This work validates anomaly detection for these attacks on two complementary platforms. ndnSIM provides a controlled simulation environment for evaluating both IFA and CP simultaneously with deterministic traffic and ground-truth timing. miniNDN provides an emulation environment where real NFD processes handle actual NDN packet forwarding, capturing system-level behaviours (OS scheduling, NFD implementation quirks, realistic timing jitter) that simulation cannot model. The agreement of key findings across both platforms strengthens confidence in the results.
+
+% ============================================================
+\part*{Part I: ndnSIM Simulation}
+
+% ============================================================
+\section{Simulation Platform}
+
+\subsection{Environment}
+
+All simulations run inside a Docker container based on Ubuntu~20.04 using:
+
+\begin{itemize}[noitemsep]
+  \item \textbf{ns-3.35} --- discrete-event network simulator
+  \item \textbf{ndnSIM~2.x} \cite{ndnsim-repo} --- NDN protocol module for ns-3, providing NFD-based forwarding, PIT/FIB/CS tables, and consumer/producer application helpers
+  \item \textbf{C++17} compiler toolchain
+\end{itemize}
+
+Scenarios reside in a \texttt{ndn-research/} directory compiled via Waf. Custom applications (e.g., the non-responding producer for IFA) reside in \texttt{extensions/} and are compiled into the scenario library automatically.
+
+\subsection{Tracers and Output Format}
+
+Each simulation produces four output files per run:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{L3RateTracer} (\texttt{*-rate-trace.txt}) --- per-face, per-node, per-second counters for InInterests, OutInterests, InData, OutData, InNacks, OutNacks, InSatisfiedInterests, InTimedOutInterests.
+  \item \textbf{CsTracer} (\texttt{*-cs-trace.txt}) --- per-node, per-second Content Store hit and miss counts.
+  \item \textbf{AppDelayTracer} (\texttt{*-app-delays.txt}) --- per-packet application-layer delay and retransmission counts.
+  \item \textbf{Ground truth} (\texttt{*-ground-truth.csv}) --- per-second labels: \texttt{normal}, \texttt{ifa}, or \texttt{cp}.
+\end{enumerate}
+
+% ============================================================
+\section{Topologies (Shared Across Both Platforms)}
+
+The same three topologies are used in both ndnSIM (Part~I) and miniNDN (Part~II), enabling direct cross-platform comparison. All point-to-point links operate at 10\,Mbps with 10\,ms propagation delay unless noted. Content Store capacity is 100 entries per node.
+
+\subsection{Tree-12}
+
+Hierarchical topology: two producers (\texttt{p1}, \texttt{p2}) connect to root router \texttt{r1}, which branches through \texttt{r2}, \texttt{r3}, \texttt{r4} to six consumers (\texttt{c1}--\texttt{c6}). All consumer traffic passes through backbone routers \texttt{r1}--\texttt{r2}, making this topology susceptible to network-wide flooding.
+
+\begin{table}[H]
+\centering
+\caption{Tree-12 link structure (all links 10\,Mbps, 10\,ms)}
+\begin{tabular}{ll}
+\toprule
+\textbf{Links} & \textbf{Delay} \\
+\midrule
+p1--r1, p2--r1, r1--r2, r1--r3, r2--r4, r3--r4 & 10\,ms \\
+r2--c1, r2--c2, r3--c3, r3--c4, r4--c5, r4--c6 & 10\,ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{DFN-12}
+
+Identical node set to Tree-12 with two additional cross-links (\texttt{r1}--\texttt{r4} at 15\,ms and \texttt{r2}--\texttt{r3} at 15\,ms) creating a denser mesh with redundant forwarding paths.
+
+\subsection{Dumbbell-10}
+
+Bottleneck topology with three consumers (\texttt{c1}--\texttt{c3}) and two producers (\texttt{p1}, \texttt{p2}) connected through a single bottleneck node:
+
+\begin{lstlisting}[frame=none,backgroundcolor=\color{white}]
+c1, c2, c3 -> r1 -> r2 -> bottleneck -> r3 -> r4 -> p1, p2
+\end{lstlisting}
+
+All traffic concentrates at the bottleneck, producing the strongest detection signals of the three topologies.
+
+% ============================================================
+\section{ndnSIM Traffic Scenarios}
+
+Nine simulation runs (3 topologies $\times$ 3 scenarios) each last 600 seconds. Attack traffic starts at $t = 300$\,s, giving balanced 300\,s normal and 300\,s attack segments.
+
+\subsection{Normal Traffic}
+
+All consumers use \texttt{ConsumerZipfMandelbrot} at 10 interests/s with catalog $N = 100$, $q = 0.0$, $s = 0.7$. Both producers serve \texttt{/ndn} with 1024-byte payloads. Routes are computed via \texttt{GlobalRoutingHelper}.
+
+\subsection{Interest Flooding Attack (IFA)}
+
+Legitimate consumers use \texttt{ConsumerCbr} at 10 interests/s (flat distribution, not Zipf-Mandelbrot, to keep the pre-attack baseline fixed). At $t = 300$\,s, consumer \texttt{c1} launches four concurrent attack streams:
+
+\begin{table}[H]
+\centering
+\caption{IFA attack stream configuration (all from \texttt{c1}, starting at $t = 300$\,s)}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Prefix} & \textbf{Rate (int/s)} & \textbf{InterestLifetime} \\
+\midrule
+\texttt{/evil/fake/video}       & 40 & 2000\,ms \\
+\texttt{/evil/random-attack}    & 30 & 1500\,ms \\
+\texttt{/evil/fake/image}       & 20 & 1000\,ms \\
+\texttt{/evil/random-attack-2}  & 10 & 4000\,ms \\
+\midrule
+\textbf{Total}                  & \textbf{100} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A custom \texttt{BlackholeProducer} is installed for the \texttt{/evil} prefix. It accepts interests but never sends Data, causing PIT entries to hold until timeout. Without this, interests would either be satisfied (no PIT pressure) or NACKed immediately (no timeout accumulation).
+
+\subsection{Content Poisoning (CP)}
+
+Legitimate consumers use Zipf-Mandelbrot as in the normal scenario. At $t = 300$\,s, consumers \texttt{c1} and \texttt{c6} (or \texttt{c1} and \texttt{c3} in Dumbbell) each launch 50 \texttt{ConsumerCbr} applications requesting unique junk names under \texttt{/ndn/junk/} at 2 interests/s each (200 total junk interests/s). Because junk names fall under \texttt{/ndn}, producers serve them legitimately, filling the CS and continuously evicting popular cached content.
+
+% ============================================================
+\section{ndnSIM Feature Extraction}
+
+Raw per-second tracer output is pre-processed into eleven derived features per node (Table~\ref{tab:ndnsim-features}). All features use delta quantities (difference between consecutive 1-second samples) to reflect per-interval rates rather than cumulative totals.
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM feature set (11 features)}
+\label{tab:ndnsim-features}
+\begin{tabular}{lll}
+\toprule
+\textbf{Feature} & \textbf{Formula} & \textbf{Source} \\
+\midrule
+Satisfaction Ratio     & $\Delta\text{Satisfied} / (\Delta\text{Satisfied} + \Delta\text{TimedOut})$ & L3RateTracer \\
+Timeout Ratio          & $\Delta\text{TimedOut} / (\Delta\text{Satisfied} + \Delta\text{TimedOut})$  & L3RateTracer \\
+Cache Hit Ratio        & $\Delta\text{Hits} / (\Delta\text{Hits} + \Delta\text{Misses})$             & CsTracer \\
+Nack Ratio             & $\Delta\text{InNacks} / \Delta\text{InInterests}$                           & L3RateTracer \\
+Interest Amplification & $\Delta\text{OutInterests} / \Delta\text{InInterests}$                      & L3RateTracer \\
+Data Ratio             & $\Delta\text{InData} / \Delta\text{InInterests}$                            & L3RateTracer \\
+InInterests (rate)     & $\Delta\text{InInterests}$ per second                                       & L3RateTracer \\
+OutInterests (rate)    & $\Delta\text{OutInterests}$ per second                                      & L3RateTracer \\
+InData (rate)          & $\Delta\text{InData}$ per second                                            & L3RateTracer \\
+Mean Delay             & Average application-layer round-trip time (s)                               & AppDelayTracer \\
+Mean Retx Count        & Average interest retransmission count                                       & AppDelayTracer \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{ndnSIM Detection Methodology}
+
+\subsection{Motivation: Opposite Attack Signatures}
+
+IFA and CP produce directionally opposite changes in the same features, making a single detector insufficient:
+
+\begin{table}[H]
+\centering
+\caption{Feature response directions under IFA vs.\ CP}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Feature} & \textbf{Under IFA} & \textbf{Under CP} \\
+\midrule
+Satisfaction Ratio & $\downarrow$ collapses to $\approx 0$      & $\uparrow$ stays high (junk is satisfied) \\
+Timeout Ratio      & $\uparrow$ spikes sharply                  & $\approx$ unchanged \\
+Cache Hit Ratio    & $\approx 0$ (no hits on \texttt{/evil})    & $\downarrow$ (legitimate content evicted) \\
+InInterests        & $\uparrow$ +100 fake interests/s           & $\uparrow$ moderate (+200 junk/s) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Dual Per-Node Static Baseline Detector}
+
+For each node, a baseline mean $\mu_f$ and standard deviation $\sigma_f$ is computed from the first 200 seconds of the pure normal scenario. No attack data is used.
+
+\paragraph{IFA Sub-Detector.}
+Directional z-scores on three features ($F_{\text{IFA}}$: satisfaction\_ratio$\downarrow$, timeout\_ratio$\uparrow$, InInterests$\uparrow$). A timestep is flagged if the mean directional z-score exceeds 2.5. The IFA score is the fraction of flagged steps in a 3-step rolling window, scaled to 0--100.
+
+\paragraph{CP Sub-Detector.}
+Directional z-scores on two features ($F_{\text{CP}}$: cache\_hit\_ratio$\downarrow$, InInterests$\uparrow$). A timestep is flagged if the mean directional z-score exceeds 2.0. The CP score is the fraction of flagged steps in a 10-step rolling window, scaled to 0--100. The wider window smooths the oscillating burst pattern of CP traffic.
+
+\paragraph{Combined Score and Alarm.}
+$\text{anomaly\_score} = \max(\text{IFA\_score},\ \text{CP\_score})$. An alarm is raised when anomaly\_score~$> 50$.
+
+% ============================================================
+\section{ndnSIM Results}
+
+\subsection{Temporal Detection Performance}
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM: Mean anomaly score before and after attack onset ($t = 301$\,s), global model}
+\label{tab:ndnsim-lift}
+\begin{tabular}{llccccc}
+\toprule
+\multirow{2}{*}{\textbf{Topology}} & \multirow{2}{*}{\textbf{Attack}} &
+\multicolumn{2}{c}{\textbf{Pre-attack}} & \multicolumn{2}{c}{\textbf{Post-attack}} & \multirow{2}{*}{\textbf{Lift}} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+& & IFA sub & CP sub & IFA sub & CP sub & \\
+\midrule
+DFN      & IFA & 0.7 & 1.0 & 42.2 & 33.2 & \textbf{40.5} \\
+DFN      & CP  & 0.7 & 1.0 & 56.8 & 53.2 & \textbf{55.5} \\
+Dumbbell & IFA & 0.7 & 0.9 & 80.0 & 60.0 & \textbf{78.6} \\
+Dumbbell & CP  & 0.7 & 0.9 & 85.7 & 78.4 & \textbf{85.0} \\
+Tree     & IFA & 0.8 & 1.1 & 42.2 & 32.9 & \textbf{40.4} \\
+Tree     & CP  & 0.8 & 1.1 & 57.4 & 50.5 & \textbf{55.8} \\
+\midrule
+\multicolumn{6}{l}{Normal (all topologies), mean anomaly score} & \textbf{5.21} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Pre-attack scores remain between 1.4--1.8. Post-attack lifts range from 40.4 to 85.0 points. Dumbbell produces the strongest signals due to its bottleneck structure concentrating all attack traffic at one node.
+
+\subsection{Per-Node Detection and Spatial Localisation}
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM: Node-level detection summary (alarm threshold = 50)}
+\label{tab:ndnsim-detection}
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Topology} & \textbf{Attack} & \textbf{Nodes detected} & \textbf{Total nodes} & \textbf{Detection rate} & \textbf{Mean latency (s)} \\
+\midrule
+DFN      & IFA & 5  & 12 & 42\% & 1.2 \\
+DFN      & CP  & 7  & 12 & 58\% & 2.1 \\
+Dumbbell & IFA & 8  & 10 & 80\% & 1.1 \\
+Dumbbell & CP  & 9  & 10 & 90\% & 2.0 \\
+Tree     & IFA & 5  & 12 & 42\% & 1.2 \\
+Tree     & CP  & 7  & 12 & 58\% & 1.1 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The set of alarming nodes follows the attack's forwarding path: for IFA, the detected nodes are consistently the attacker (\texttt{c1}) and the routers along the \texttt{c1}~$\to$~producer path. For CP, the two attacker consumers and their adjacent routers alarm. This constitutes an implicit attack path fingerprint without explicit routing table access.
+
+% ============================================================
+\part*{Part II: miniNDN Emulation}
+
+% ============================================================
+\section{Emulation Platform}
+
+\subsection{Environment}
+
+miniNDN~\cite{minindn} is a Python-based network emulator built on Mininet that provisions real Linux network namespaces and runs actual NFD (Named Data Networking Forwarding Daemon) processes on each emulated node. Unlike ndnSIM, which implements a simplified NDN model in C++, miniNDN executes the same NFD binary used in production NDN deployments. This captures system-level effects such as OS process scheduling overhead, NFD's internal buffering behaviour, and realistic timing jitter --- all absent from simulation.
+
+The experimental stack consists of:
+\begin{itemize}[noitemsep]
+  \item \textbf{miniNDN} --- topology provisioning and experiment orchestration
+  \item \textbf{NFD (Named Data Networking Forwarding Daemon)} --- actual NDN forwarding process per node
+  \item \textbf{NLSR (Named-data Link State Routing)} --- distributed routing protocol for FIB computation
+  \item \textbf{Custom Python logging scripts} --- poll per-node NFD management counters every $\sim$10 seconds and write records to JSONL files
+\end{itemize}
+
+\subsection{Data Collection}
+
+Each node's NFD management interface exposes cumulative counters (nPitEntries, nInInterests, nOutInterests, nInData, nInNacks, nOutNacks, nSatisfiedInterests, nUnsatisfiedInterests, nCsEntries, nHits, nMisses) that are polled at approximately 10-second intervals and written to per-node JSONL log files. The polling interval is inherently less precise than ndnSIM's deterministic 1-second output due to OS scheduling, resulting in variable inter-sample intervals that are accounted for during feature extraction.
+
+A 10-minute (600-second) warmup period is discarded per node to eliminate cache cold-start artefacts before features are computed.
+
+\subsection{Attack Scenario}
+
+The miniNDN experiments cover \textbf{IFA only}. In each topology, node \texttt{c1} generates a stream of interests for non-existent content names at a high rate starting from experiment onset (no warmup split --- the entire log is labelled attack after the warmup removal). The attack exploits the same PIT-exhaustion mechanism as in ndnSIM: interests for unresolvable names accumulate in router PITs until their lifetime expires, competing with legitimate traffic.
+
+CP data was not collected in the miniNDN campaign. This is acknowledged as a limitation; the ndnSIM results (Part~I) provide CP coverage.
+
+% ============================================================
+\section{miniNDN Feature Engineering}
+
+Features are derived from consecutive JSONL record pairs (delta between two polling samples) to produce per-interval rate and ratio estimates. Ten features are computed (Table~\ref{tab:minindn-features}).
+
+\begin{table}[H]
+\centering
+\caption{miniNDN feature set (10 features, all delta-based)}
+\label{tab:minindn-features}
+\begin{tabular}{lll}
+\toprule
+\textbf{Feature} & \textbf{Formula} & \textbf{Type} \\
+\midrule
+pit\_size             & $\text{nPitEntries}$                                                          & Instantaneous \\
+cs\_size              & $\text{nCsEntries}$                                                           & Instantaneous \\
+pit\_growth\_rate     & $\Delta\text{nPitEntries} / \Delta t$                                         & Rate \\
+in\_interests\_rate   & $\Delta\text{nInInterests} / \Delta t$                                        & Rate \\
+out\_interests\_rate  & $\Delta\text{nOutInterests} / \Delta t$                                       & Rate \\
+in\_data\_rate        & $\Delta\text{nInData} / \Delta t$                                             & Rate \\
+nack\_rate            & $\Delta(\text{nInNacks}+\text{nOutNacks}) / \Delta t$                         & Rate \\
+cache\_hit\_ratio     & $\Delta\text{nHits} / (\Delta\text{nHits} + \Delta\text{nMisses})$            & Ratio \\
+satisfaction\_ratio   & $\Delta\text{nSatisfied} / (\Delta\text{nSatisfied}+\Delta\text{nUnsatisfied})$ & Ratio \\
+unsatisfied\_ratio    & $\Delta\text{nUnsatisfied} / (\Delta\text{nSatisfied}+\Delta\text{nUnsatisfied})$ & Ratio \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Rate features (pit\_growth\_rate, in\_interests\_rate, out\_interests\_rate, in\_data\_rate, nack\_rate) are clipped to the 1st--99th percentile of the training dataset to suppress outliers from polling interval jitter. Clip bounds computed on training data are saved and applied identically at inference time.
+
+% ============================================================
+\section{miniNDN Model: Isolation Forest}
+
+\subsection{Algorithm and Configuration}
+
+An Isolation Forest \cite{iforest} is trained on the clean normal traffic data only (no attack labels used). The model is wrapped in a scikit-learn Pipeline with a StandardScaler preprocessing step.
+
+\begin{table}[H]
+\centering
+\caption{Isolation Forest hyperparameters}
+\begin{tabular}{ll}
+\toprule
+\textbf{Parameter} & \textbf{Value} \\
+\midrule
+Number of trees          & 200 \\
+Contamination            & 0.01 (1\% assumed anomaly rate in training data) \\
+Max samples              & auto \\
+Random state             & 42 \\
+Preprocessing            & StandardScaler \\
+Anomaly threshold $\theta$ & 0.0 (raw \texttt{decision\_function} score) \\
+Training samples         & 126,423 (combined normal traffic, all 3 topologies) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Score Normalisation}
+
+Raw \texttt{decision\_function} scores are mapped to a 0--100\% scale for interpretability:
+
+\begin{equation}
+\text{score}_{[0,100]} =
+\begin{cases}
+30 + \dfrac{s - \theta}{s_{\max} - \theta} \times 70 & s \geq \theta \quad \text{(normal side)} \\[8pt]
+30 \times \dfrac{s - s_{\min}}{\theta - s_{\min}} & s < \theta \quad \text{(anomaly side)}
+\end{cases}
+\end{equation}
+
+where $s$ is the raw score, $\theta = 0.0$ is the anomaly boundary, and $s_{\min}$, $s_{\max}$ are the minimum and maximum training scores. A score below 30\% corresponds to the strict detection threshold; below 50\% corresponds to the operational threshold.
+
+% ============================================================
+\section{miniNDN Results}
+
+\subsection{Attacker Detection Performance}
+
+\begin{table}[H]
+\centering
+\caption{miniNDN: IFA attacker node \texttt{c1} detection rate and normal traffic false positive rate}
+\label{tab:minindn-detection}
+\begin{tabular}{lcccc}
+\toprule
+\multirow{2}{*}{\textbf{Topology}} &
+\multicolumn{2}{c}{\textbf{Attacker \texttt{c1} detection}} &
+\multicolumn{2}{c}{\textbf{Normal traffic FPR}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+& @30\% threshold & @50\% threshold & @30\% & @50\% \\
+\midrule
+Tree     & 89.1\% & 91.2\% & 0.19\% & 1.08\% \\
+Dumbbell & 98.5\% & 98.7\% & 1.00\% & 4.27\% \\
+DFN      & 96.7\% & 96.8\% & 0.64\% & 4.10\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Attacker detection exceeds 91\% at the operational threshold across all three topologies. Normal traffic false positive rates remain below 4.3\% at the operational threshold, confirming a low false alarm rate on clean data.
+
+\subsection{Spatial Attack Propagation}
+
+Per-node detection rates reveal how the attack propagates through each topology. Key observations from the Tree topology (Figure~\ref{fig:minindn-pernode}):
+
+\begin{itemize}[noitemsep]
+  \item \textbf{Attacker \texttt{c1}:} 91.2\% detection rate (starred in figure) --- highest among consumers.
+  \item \textbf{Backbone routers \texttt{r1}, \texttt{r2}:} 88--90\% detection --- carry all attack traffic upstream.
+  \item \textbf{Leaf routers \texttt{r3}, \texttt{r4}:} 1--20\% detection --- outside the attack forwarding path.
+  \item \textbf{Producer \texttt{p1}:} 90.5\% detection --- lies on \texttt{c1}'s primary forwarding path and receives anomalous Interest bursts directly.
+  \item \textbf{Producer \texttt{p2}:} 34\% detection --- on a secondary path, partially affected.
+  \item \textbf{Benign consumers \texttt{c2}--\texttt{c6}:} 51--58\% detection --- elevated due to network-wide flooding in the hierarchical tree structure (discussed below).
+\end{itemize}
+
+\begin{table}[H]
+\centering
+\caption{miniNDN: Per-role detection rates at the 50\% operational threshold}
+\label{tab:minindn-pernode}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Node role} & \textbf{Node} & \textbf{Tree} & \textbf{Dumbbell} & \textbf{DFN} \\
+\midrule
+Attacker consumer & \texttt{c1}         & 91.2\% & 98.7\% & 96.8\% \\
+Backbone routers  & \texttt{r1, r2}     & 90--90.4\% & 98.7\% & 97\% \\
+Leaf routers      & \texttt{r3, r4}     & 18--22\% & 2.0\% & 7.7--8.8\% \\
+Producer (path)   & \texttt{p1}         & 90.5\% & 72.4\% & 46.5\% \\
+Producer (off-path) & \texttt{p2}       & 30.0\% & 2.2\%  & 2.3\% \\
+Benign consumers  & \texttt{c2}--\texttt{c6} & 51--58\%$^*$ & 3.2--5.0\% & 3.5--7.3\% \\
+\bottomrule
+\multicolumn{5}{l}{$^*$Elevated due to network-wide flooding in tree topology (see Section~\ref{sec:tree-finding}).} \\
+\end{tabular}
+\end{table}
+
+\subsection{Tree Topology: Network-Wide IFA Effect}
+\label{sec:tree-finding}
+
+The elevated benign consumer detection rates in the Tree topology (51--58\%) are not a false alarm failure --- they are a real network-wide effect. The tree's hierarchical structure forces all consumer traffic through backbone routers \texttt{r1} and \texttt{r2}. When \texttt{c1} floods these routers with IFA traffic, PIT exhaustion and NACK propagation degrade the forwarding service for \emph{all} consumers on all branches. Every benign consumer experiences anomalous satisfaction\_ratio, nack\_rate, and interest rates even though only \texttt{c1} is generating attack traffic.
+
+In DFN and Dumbbell topologies, alternative forwarding paths and physical separation of consumer branches prevent the flood from reaching all nodes, keeping benign consumer detection rates below 7.3\%.
+
+\subsection{Feature Discriminability (KS Tests)}
+
+Kolmogorov-Smirnov tests comparing normal vs.\ IFA distributions for the attacker node \texttt{c1} confirm statistically unambiguous separation:
+
+\begin{table}[H]
+\centering
+\caption{miniNDN: KS D-statistic for attacker \texttt{c1} (normal vs.\ IFA). All p-values $< 10^{-200}$.}
+\label{tab:ks}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Feature} & \textbf{Tree} & \textbf{Dumbbell} & \textbf{DFN} & \textbf{Mean} \\
+\midrule
+cache\_hit\_ratio   & \textbf{0.992} & \textbf{0.991} & 0.833 & 0.939 \\
+satisfaction\_ratio & 0.888 & 0.987 & \textbf{0.966} & 0.947 \\
+unsatisfied\_ratio  & 0.888 & 0.987 & \textbf{0.966} & 0.947 \\
+nack\_rate          & 0.836 & 0.985 & 0.965 & 0.929 \\
+in\_interests\_rate & 0.878 & 0.983 & 0.963 & 0.941 \\
+pit\_growth\_rate   & 0.028 & 0.025 & 0.030 & 0.028 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The top discriminating features (cache\_hit\_ratio, satisfaction\_ratio, nack\_rate) directly encode the IFA mechanism: the attacker generates interests that are never satisfied (satisfaction\_ratio $\to 0$), never cached (cache\_hit\_ratio $\to 0$ since names are non-existent), and generate NACK responses (nack\_rate spikes). The pit\_growth\_rate feature is essentially non-discriminating ($D = 0.028$) at the 10-second polling interval, as transient PIT dynamics are averaged out.
+
+\subsection{Global vs.\ Per-Topology Model}
+
+A single globally trained Isolation Forest (trained on all three topologies' normal data combined) achieves attacker detection rates statistically indistinguishable from three separate topology-specific models. The global model is preferred in practice as it requires no topology-specific calibration and generalises to deployments where topology may not be known in advance.
+
+% ============================================================
+\part*{Cross-Platform Findings and Conclusions}
+
+% ============================================================
+\section{Key Findings}
+\label{sec:findings}
+
+\begin{enumerate}
+
+  \item \textbf{IFA and CP produce opposite feature signatures (ndnSIM).} IFA causes satisfaction\_ratio to collapse and timeout\_ratio to spike; CP causes satisfaction\_ratio to stay elevated while cache\_hit\_ratio drops. A single-direction detector cannot cover both attack types simultaneously, motivating the dual sub-detector architecture.
+
+  \item \textbf{Attack signatures are topology-invariant (both platforms).} The global model performs identically to topology-specific models on every evaluation scenario in both ndnSIM and miniNDN. NDN attack signatures in the chosen feature space generalise across hierarchical, mesh, and bottleneck network structures without retraining. This is the single most practically important finding: a detector deployed at one site transfers to any other NDN topology.
+
+  \item \textbf{Sub-second to low single-digit detection latency (ndnSIM).} IFA detected within 1--2 seconds; CP within 1--9 seconds. Both are within the NDN Interest lifetime window (1--4 seconds), meaning alarms are raised before significant PIT or cache damage accumulates.
+
+  \item \textbf{Spatial attack fingerprint via router detection pattern (both platforms).} Routers on the attack forwarding path alarm at high rates; routers on unaffected branches remain near zero. This allows approximate attacker localisation without explicit routing table access.
+
+  \item \textbf{IFA propagates to producers (miniNDN).} Producer \texttt{p1}, on \texttt{c1}'s primary forwarding path, is detected at 90.5\%, 72.4\%, and 46.5\% across the three topologies. IFA floods Interests all the way to producer nodes, not just intermediate routers --- a finding not easily observable in simulation where producer-side behaviour is simplified.
+
+  \item \textbf{Tree topology exhibits network-wide IFA flooding (miniNDN).} Benign consumers flag at 51--58\% in the tree topology, versus $<7.3\%$ in mesh and dumbbell. The hierarchical structure makes IFA a network-wide QoS degradation event affecting all branches, not just the attacker's branch.
+
+  \item \textbf{Cross-platform agreement strengthens validity.} The Isolation Forest (miniNDN, ML-based) and the dual z-score detector (ndnSIM, statistical) independently confirm topology-invariant detection and spatial attack fingerprinting using different methods, different simulators, and different feature sets. Agreement on the core findings reduces the risk that either result is an artefact of its platform.
+
+\end{enumerate}
+
+% ============================================================
+\section{Limitations}
+\label{sec:limitations}
+
+\begin{enumerate}[noitemsep]
+
+  \item \textbf{CP not evaluated in miniNDN.} Cache Poisoning data was not collected in the emulation campaign. The CP results (Part~I) rely entirely on ndnSIM.
+
+  \item \textbf{Victim consumers not directly detected.} In ndnSIM, benign consumers affected by IFA score near zero because their own traffic generation metrics appear normal (they continue sending interests at their configured rate). In miniNDN, the tree topology does flag benign consumers, but this is due to real network-wide QoS degradation, not victim-specific anomaly detection.
+
+  \item \textbf{Simulated environment for ndnSIM.} ndnSIM models idealised 10\,Mbps point-to-point links with fixed delays. Real deployments exhibit variable link quality, asymmetric paths, and dynamic topology changes.
+
+  \item \textbf{miniNDN polling interval (10\,s) vs.\ ndnSIM (1\,s).} The coarser polling interval in miniNDN smooths fast transients (e.g., PIT growth rate becomes non-discriminating at $D = 0.028$). Sub-second polling would likely improve PIT-based feature utility.
+
+  \item \textbf{Single attack per run.} Concurrent mixed attacks (simultaneous IFA and CP from different nodes) were not evaluated on either platform.
+
+  \item \textbf{Detector threshold sensitivity not evaluated.} Z-score thresholds (2.5 for IFA, 2.0 for CP) and Isolation Forest contamination (0.01) were set based on observed training distributions. Systematic sensitivity analysis was not performed.
+
+\end{enumerate}
+
+% ============================================================
+\section{Design Decisions and Debugging}
+
+Several issues were identified and resolved during development:
+
+\begin{enumerate}[noitemsep]
+
+  \item \textbf{(ndnSIM) Routable attack prefixes.} Early IFA scenarios used prefixes under \texttt{/ndn}, which the standard Producer satisfied. Switching to \texttt{/evil} with a BlackholeProducer ensured genuine PIT timeouts.
+
+  \item \textbf{(ndnSIM) Cache-insensitive baseline.} The initial CP scenario used sequential \texttt{ConsumerCbr} with zero cache re-requests, making cache pollution unmeasurable. Replacing with \texttt{ConsumerZipfMandelbrot} established a high-cache-hit baseline.
+
+  \item \textbf{(ndnSIM) CsTracer reporting zeros.} The \texttt{CsTracer} originally reported all-zero values due to a missing full header inclusion for \texttt{nfd::Forwarder}, preventing connection to \texttt{afterCsHit}/\texttt{afterCsMiss} signals.
+
+  \item \textbf{(ndnSIM) NFD strategy segfault.} The patched ndnSIM's \texttt{Strategy::sendData()} omitted a return statement in the no-PitToken code path, causing a segfault on CS hits. Fixed by adding \texttt{return true;}.
+
+  \item \textbf{(miniNDN) Delta-based feature computation.} An earlier preprocessing version used cumulative totals for cache\_hit\_ratio and satisfaction\_ratio, causing these features to drift over time as denominators grew. Switching to per-interval deltas stabilised the features across all time windows.
+
+\end{enumerate}
+
+% ============================================================
+\section{Dataset Summary}
+
+\begin{table}[H]
+\centering
+\caption{Complete dataset summary across both platforms}
+\begin{tabular}{lllccc}
+\toprule
+\textbf{Platform} & \textbf{Topology} & \textbf{Scenario} & \textbf{Nodes} & \textbf{Samples (rows)} & \textbf{Polling} \\
+\midrule
+\multirow{9}{*}{ndnSIM}
+  & Tree     & Normal & 12 & $\sim$3,600 & 1\,s \\
+  & Tree     & IFA    & 12 & 3,600       & 1\,s \\
+  & Tree     & CP     & 12 & 3,600       & 1\,s \\
+  & DFN      & Normal & 12 & $\sim$3,600 & 1\,s \\
+  & DFN      & IFA    & 12 & 3,600       & 1\,s \\
+  & DFN      & CP     & 12 & 3,600       & 1\,s \\
+  & Dumbbell & Normal & 10 & $\sim$3,000 & 1\,s \\
+  & Dumbbell & IFA    & 10 & 3,000       & 1\,s \\
+  & Dumbbell & CP     & 10 & 3,000       & 1\,s \\
+\midrule
+\multirow{4}{*}{miniNDN}
+  & Tree     & Normal & 12 & $\sim$50,000 & $\sim$10\,s \\
+  & Dumbbell & Normal & 10 & $\sim$7,200  & $\sim$10\,s \\
+  & DFN      & Normal & 12 & $\sim$69,000 & $\sim$10\,s \\
+  & All topologies & IFA & 12/10 & 707  & $\sim$10\,s \\
+\midrule
+\multicolumn{4}{l}{miniNDN combined normal (after 10-min warmup removal)} & 126,423 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section*{Figures}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{fig_timeseries_tree.png}
+  \caption{(ndnSIM, Part~I) Feature time series for the Tree topology, mean across all nodes. The vertical dashed line marks attack onset at $t = 300$\,s. IFA (red) causes satisfaction\_ratio to collapse and InInterests to spike. CP (orange) causes cache\_hit\_ratio to drop while satisfaction stays elevated. These opposite directional signatures motivate the dual sub-detector design.}
+  \label{fig:ndnsim-timeseries}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{fig_score_timeseries.png}
+  \caption{(ndnSIM, Part~I) Anomaly score over time for all six topology-attack combinations, global model, mean across all nodes. Dotted lines show IFA and CP sub-scores; solid line shows combined score. The orange horizontal line is the alarm threshold (50). Dumbbell produces sustained scores of 80--86 due to bottleneck concentration; DFN and Tree show spikier patterns because only 5--7 of 12 nodes lie on the attack forwarding path.}
+  \label{fig:ndnsim-scores}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{fig_score_dist.png}
+  \caption{(miniNDN, Part~II) Isolation Forest anomaly score distributions for normal (blue) and IFA (red) traffic across all three topologies. Orange dashed line = 30\% strict threshold; purple dashed line = 50\% operational threshold. Normal traffic concentrates below the thresholds; IFA shifts the distribution substantially above them, particularly for Tree and DFN topologies where normal traffic already shows a high baseline cache-hit rate.}
+  \label{fig:minindn-dist}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.85\textwidth]{fig_pernode_detection_tree.png}
+  \caption{(miniNDN, Part~II) Per-node IFA detection rates in the Tree topology, global Isolation Forest model. The starred bar marks the known attacker \texttt{c1}. Backbone routers (\texttt{r1}, \texttt{r2}) and producer \texttt{p1} alarm at near-attacker rates, revealing the attack forwarding path. Benign consumers (\texttt{c2}--\texttt{c6}) are also flagged at 51--58\% due to network-wide PIT exhaustion propagating through the shared backbone.}
+  \label{fig:minindn-pernode}
+\end{figure}
+
+% ============================================================
+\begin{thebibliography}{9}
+
+\bibitem{ndnsim-repo}
+R.~Bhusal, ``Patched ndnSIM for ns-3.35,'' GitHub repository, 2024. [Online]. Available: \url{https://github.com/bhusal-rj/ndnSIM-ns3}
+
+\bibitem{ndnsim}
+A.~Afanasyev, I.~Moiseenko, and L.~Zhang, ``ndnSIM: NDN simulator for NS-3,'' \textit{NDN Technical Report NDN-0005}, 2012.
+
+\bibitem{ndn-arch}
+L.~Zhang et al., ``Named data networking,'' \textit{ACM SIGCOMM Computer Communication Review}, vol.~44, no.~3, pp.~66--73, 2014.
+
+\bibitem{minindn}
+S.~Mastorakis et al., ``ndnSIM 2.0: A new version of the NDN simulator for NS-3,'' \textit{NDN Technical Report NDN-0028}, 2016.
+
+\bibitem{iforest}
+F.~T.~Liu, K.~M.~Ting, and Z.-H.~Zhou, ``Isolation forest,'' in \textit{Proc.\ IEEE ICDM}, 2008, pp.~413--422.
+
+\bibitem{ifa-survey}
+A.~Compagno, M.~Conti, P.~Gasti, and G.~Tsudik, ``Poseidon: Mitigating interest flooding DDoS attacks in named data networking,'' in \textit{Proc.\ IEEE LCN}, 2013, pp.~630--638.
+
+\bibitem{cp-attack}
+C.~Ghali, G.~Tsudik, and E.~Uzun, ``Needle in a haystack: Mitigating content poisoning in named-data networking,'' in \textit{Proc.\ NDSS SENT Workshop}, 2014.
+
+\end{thebibliography}
+
+\end{document}

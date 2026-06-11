@@ -1,0 +1,113 @@
+#include "ns3/core-module.h"
+#include "ns3/network-module.h"
+#include "ns3/point-to-point-module.h"
+#include "ns3/ndnSIM-module.h"
+#include <fstream>
+
+using namespace ns3;
+
+int main(int argc, char* argv[])
+{
+  double simTime = 600.0;
+
+  CommandLine cmd;
+  cmd.AddValue("simTime", "Simulation time in seconds", simTime);
+  cmd.Parse(argc, argv);
+
+  system("mkdir -p results");
+
+  NodeContainer producers, routers, consumers;
+  producers.Create(2);
+  routers.Create(4);
+  consumers.Create(6);
+
+  NodeContainer allNodes;
+  allNodes.Add(producers);
+  allNodes.Add(routers);
+  allNodes.Add(consumers);
+
+  Ptr<Node> p1 = producers.Get(0);
+  Ptr<Node> p2 = producers.Get(1);
+  Ptr<Node> r1 = routers.Get(0);
+  Ptr<Node> r2 = routers.Get(1);
+  Ptr<Node> r3 = routers.Get(2);
+  Ptr<Node> r4 = routers.Get(3);
+  Ptr<Node> c1 = consumers.Get(0);
+  Ptr<Node> c2 = consumers.Get(1);
+  Ptr<Node> c3 = consumers.Get(2);
+  Ptr<Node> c4 = consumers.Get(3);
+  Ptr<Node> c5 = consumers.Get(4);
+  Ptr<Node> c6 = consumers.Get(5);
+
+  // Standard 10ms links (same as tree)
+  PointToPointHelper p2p;
+  p2p.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p.SetChannelAttribute("Delay", StringValue("10ms"));
+
+  p2p.Install(p1, r1);
+  p2p.Install(p2, r1);
+  p2p.Install(r1, r2);
+  p2p.Install(r1, r3);
+  p2p.Install(r2, r4);
+  p2p.Install(r3, r4);
+  p2p.Install(r2, c1);
+  p2p.Install(r2, c2);
+  p2p.Install(r3, c3);
+  p2p.Install(r3, c4);
+  p2p.Install(r4, c5);
+  p2p.Install(r4, c6);
+
+  // DFN extra cross-links at 15ms — this is the only difference from tree
+  PointToPointHelper p2p15;
+  p2p15.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+  p2p15.SetChannelAttribute("Delay", StringValue("15ms"));
+
+  p2p15.Install(r1, r4);
+  p2p15.Install(r2, r3);
+
+  ns3::ndn::StackHelper ndnHelper;
+  ndnHelper.SetDefaultRoutes(true);
+  ndnHelper.setCsSize(100);
+  ndnHelper.Install(allNodes);
+
+  ns3::ndn::GlobalRoutingHelper grHelper;
+  grHelper.Install(allNodes);
+
+  ns3::ndn::AppHelper producerHelper("ns3::ndn::Producer");
+  producerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  producerHelper.SetAttribute("PayloadSize", StringValue("1024"));
+  producerHelper.Install(p1);
+  producerHelper.Install(p2);
+
+  grHelper.AddOrigins("/ndn", p1);
+  grHelper.AddOrigins("/ndn", p2);
+  ns3::ndn::GlobalRoutingHelper::CalculateRoutes();
+
+  ns3::ndn::AppHelper consumerHelper("ns3::ndn::ConsumerZipfMandelbrot");
+  consumerHelper.SetAttribute("Prefix", StringValue("/ndn"));
+  consumerHelper.SetAttribute("Frequency", StringValue("10"));
+  consumerHelper.SetAttribute("NumberOfContents", StringValue("100"));
+  consumerHelper.SetAttribute("q", StringValue("0.0"));
+  consumerHelper.SetAttribute("s", StringValue("0.7"));
+  consumerHelper.Install(c1);
+  consumerHelper.Install(c2);
+  consumerHelper.Install(c3);
+  consumerHelper.Install(c4);
+  consumerHelper.Install(c5);
+  consumerHelper.Install(c6);
+
+  ns3::ndn::L3RateTracer::InstallAll("results/dfn-normal-rate-trace.txt", Seconds(1.0));
+  ns3::ndn::CsTracer::InstallAll("results/dfn-normal-cs-trace.txt", Seconds(1.0));
+  ns3::ndn::AppDelayTracer::InstallAll("results/dfn-normal-app-delays.txt");
+
+  std::ofstream gt("results/dfn-normal-ground-truth.csv");
+  gt << "time,label\n";
+  for (double t = 0; t < simTime; t += 1.0)
+    gt << t << ",normal\n";
+  gt.close();
+
+  Simulator::Stop(Seconds(simTime));
+  Simulator::Run();
+  Simulator::Destroy();
+  return 0;
+}

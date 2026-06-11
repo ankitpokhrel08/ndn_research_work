@@ -1,0 +1,46 @@
+{
+  "features": [
+    "pit_size",
+    "pit_growth_rate",
+    "cs_size",
+    "cache_hit_ratio",
+    "satisfaction_ratio",
+    "unsatisfied_ratio",
+    "in_interests_rate",
+    "out_interests_rate",
+    "in_data_rate",
+    "nack_rate"
+  ],
+  "clip_bounds": {
+    "pit_growth_rate": {
+      "lo": -0.19874923765908206,
+      "hi": 0.19870723347972596
+    },
+    "in_interests_rate": {
+      "lo": 1.9867309103420858,
+      "hi": 15.544010126411878
+    },
+    "out_interests_rate": {
+      "lo": 1.192044097430585,
+      "hi": 7.879612883915501
+    },
+    "in_data_rate": {
+      "lo": 0.9951572781577012,
+      "hi": 8.224937000194302
+    },
+    "nack_rate": {
+      "lo": 0.0,
+      "hi": 0.0
+    }
+  },
+  "threshold": 0.0,
+  "score_min": -0.12838494712693582,
+  "score_max": 0.27141845088173633,
+  "n_training_samples": 54889,
+  "trained_on": [
+    "tree_normal_1",
+    "tree_normal_2",
+    "dumbbell_normal",
+    "dfn_normal"
+  ]
+}
