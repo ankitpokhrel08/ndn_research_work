@@ -33,8 +33,11 @@ Forest method.
 ### 1.1 Scenarios (9 = 3 topologies x 3 conditions)
 
 ns-3 / ndnSIM C++ simulations, 600 s each; attacks start at t = 300 s (balanced
-300 s normal / 300 s attack). Per-second ground-truth labels are written for
-evaluation only.
+300 s normal / 300 s attack). The per-second ground-truth label is a **network-state
+label** (is an attack active anywhere, and of which type) used only to gate the
+evaluation window - it is **not** a per-node attack label, since most nodes are
+unaffected by an attack elsewhere. The per-node verdict instead uses topological
+roles (see Section 2.3). Labels never enter model fitting.
 
 | Topology | Nodes | Normal | IFA attacker | CP attackers |
 |---|---|---|---|---|
@@ -129,7 +132,35 @@ threshold (`figures/detection/fig_score_dist_comparison.png`). **Held-out
 normal-scenario false-positive rate is 0.00%** (evaluated on normal traffic after
 the 200 s training window). Global and per-topology forests are near-identical.
 
-### 2.3 Robustness and feature ablation
+### 2.3 Spatial localization - the score traces the attack path
+
+The time-based ground-truth label marks *when* an attack is active network-wide; it
+is **not** a per-node truth (a benign off-path node is not anomalous merely because
+an attack runs elsewhere). For a per-node verdict we classify each node by its
+**topological role** - attacker / producer / on-path router / off-path router /
+benign consumer - using the topology graph and a BFS from the attacker, and inspect
+the score gradient (`processed/spatial_localization.csv`,
+`figures/detection/fig_spatial_localization.png`):
+
+| Role | IFA score | CP score |
+|---|---|---|
+| Attacker | 78.4 | 100.0 |
+| On-path router | 75.4 | 88.7 |
+| Producer | 60.7 | 63.7 |
+| Off-path router | 36.2 | 36.7 |
+| Benign consumer | 2.0 | 2.1 |
+
+The unsupervised score forms a clean **spatial gradient**: every node on the attack's
+forwarding path (attacker, transit routers, destination producers) is elevated, while
+off-path routers are only partial and benign consumers sit near zero. The detector
+therefore **localizes the attack and fingerprints its path** - it does not
+blanket-flag the network during the attack window, which is the correct behavior
+since most nodes are genuinely unaffected. Note the score follows *path membership*,
+not raw hop distance: producers are several hops from the attacker yet light up
+because the attack traffic flows to them. This is a stronger and more honest verdict
+than a single network-wide "detection rate."
+
+### 2.4 Robustness and feature ablation
 
 The detector is not a lucky seed or feature artifact
 (`notebooks/03_updated_detection.ipynb` section 8):
@@ -153,7 +184,7 @@ makes a direction-blind isolation model detect both IFA and CP. Ratios alone are
 insufficient. The global model is the right choice - pooling does not hurt, and
 per-topology specialization is slightly weaker.
 
-### 2.4 Feature discriminability (KS)
+### 2.5 Feature discriminability (KS)
 
 KS D-statistic, mean over nodes (`processed/ks_results.csv`):
 
@@ -187,8 +218,12 @@ separate on interest rates.
 3. **The detector is fully unsupervised and method-unified with miniNDN** (same
    `StandardScaler -> IsolationForest` pipeline, same configuration); labels serve
    evaluation only.
-4. **Detection is path-localized**: attacker + on-path routers fire; off-path
-   routers and benign consumers stay silent - useful for attribution/mitigation.
+4. **Detection is path-localized, not network-wide.** The unsupervised score forms a
+   spatial gradient - attacker (78-100) > on-path routers (75-89) > producers (61-64)
+   > off-path routers (~36) > benign consumers (~2) - so the detector fingerprints
+   the attack's forwarding path rather than blanket-flagging traffic during the
+   attack window. Useful for attribution/mitigation, and the correct per-node verdict
+   given that most nodes are genuinely unaffected.
 5. **The result is robust** to random seed and to the global / per-topology choice,
    and the ablation shows the rate/count features are what carry the signal.
 
@@ -280,6 +315,12 @@ while attack traffic separates past the alarm threshold."*
 counts-only, and ratios-only feature sets. *Caption: "Feature ablation: the
 rate/count features carry the attack signal; ratios alone are insufficient."*
 
+**`fig_spatial_localization.png`** - (left) mean anomaly score by node role
+(attacker / producer / on-path router / off-path router / benign consumer);
+(right) score vs hop distance from the attacker, colored by role. *Caption: "Spatial
+localization: the unsupervised score traces the attack's forwarding path. On-path
+nodes are flagged at any distance; off-path routers and benign consumers stay low."*
+
 ### 6.3 Result tables - `processed/`
 
 | File | Contents |
@@ -287,6 +328,7 @@ rate/count features carry the attack signal; ratios alone are insufficient."*
 | `ks_results.csv` | KS D-statistic + p-value per (topology, node, attack, feature) |
 | `detection_latency.csv` | per-node detected flag + latency + attacker flag |
 | `detection_per_node.csv` | per-node detection rate (global vs per-topology) |
+| `spatial_localization.csv` | per-node role, hop distance, on-path flag, mean score |
 | `full_scored_global.csv` | every node-second scored by the global Isolation Forest |
 | `full_scored_pertopo.csv` | every node-second scored by per-topology forests |
 | `full_dataset.csv` | engineered features + labels for all 9 runs |

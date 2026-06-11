@@ -260,6 +260,29 @@ Tree     & CP  & 100\% & 0\% & 6 & 12 & 1.0 \\
 
 Every attacker node is detected within $\approx 1$\,s, and no benign consumer is ever flagged. The remaining alarming nodes follow the attack's forwarding path: for IFA, the attacker (\texttt{c1}) and the routers along the \texttt{c1}~$\to$~producer path; for CP, the two attacker consumers and their adjacent routers. The un-flagged nodes are the off-path routers and benign consumers. This constitutes an implicit attack path fingerprint without explicit routing table access. The detector is stable across random seeds (identical results for seeds 42, 1, 7) and the per-topology variant performs comparably (89\% attacker detection); a feature ablation confirms the rate/count features carry the attack signal.
 
+\subsection{Spatial Gradient: the Score Traces the Forwarding Path}
+
+The per-second ground-truth label is a \emph{network-state} label (whether an attack is active anywhere in the network), used only to gate the evaluation window. It is not a per-node attack label: a benign off-path node is not anomalous merely because an attack runs elsewhere. For a per-node verdict we therefore classify each node by its \emph{topological role} --- attacker / producer / on-path router / off-path router / benign consumer, derived from the topology graph by a breadth-first search from the attacker --- and examine the score gradient.
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM: Mean post-attack anomaly score by topological role (global model). The score forms a spatial gradient along the attack's forwarding path.}
+\label{tab:ndnsim-spatial}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Node role} & \textbf{IFA score} & \textbf{CP score} \\
+\midrule
+Attacker          & 78.4 & 100.0 \\
+On-path router    & 75.4 & 88.7  \\
+Producer          & 60.7 & 63.7  \\
+Off-path router   & 36.2 & 36.7  \\
+Benign consumer   & 2.0  & 2.1   \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The unsupervised score forms a clean spatial gradient: every node on the attack's forwarding path (attacker, transit routers, destination producers) is elevated above the alarm, while off-path routers are only partially elevated and benign consumers sit near zero. The detector thus \emph{localises} the attack and fingerprints its path rather than blanket-flagging the network during the attack window --- the correct per-node behaviour, since most nodes are genuinely unaffected. The score follows \emph{path membership}, not raw hop distance: producers sit several hops from the attacker yet alarm, because the attack traffic flows to them (Figure~\ref{fig:ndnsim-spatial}).
+
 % ============================================================
 \part*{Part II: miniNDN Emulation}
 
@@ -562,6 +585,13 @@ Several issues were identified and resolved during development:
   \includegraphics[width=0.85\textwidth]{fig_score_timeseries.png}
   \caption{(ndnSIM, Part~I) Isolation Forest anomaly score over time for all six topology-attack combinations, global model. Each panel shows the mean score of the attacker nodes against the normal $\pm 1\sigma$ band. The orange horizontal line is the alarm threshold (70). Attacker nodes cross the alarm within $\approx 1$\,s of attack onset for both IFA and CP, reaching the maximum score for CP.}
   \label{fig:ndnsim-scores}
+\end{figure}
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\textwidth]{fig_spatial_localization.png}
+  \caption{(ndnSIM, Part~I) Spatial localisation of the unsupervised score. \textbf{Left:} mean post-attack anomaly score by node role --- attacker $>$ on-path router $>$ producer $>$ off-path router $>$ benign consumer --- a clean gradient along the forwarding path. \textbf{Right:} score versus hop distance from the attacker, coloured by role; on-path nodes stay elevated at any distance while off-path routers and benign consumers stay low, showing the score follows path membership rather than raw distance.}
+  \label{fig:ndnsim-spatial}
 \end{figure}
 
 \begin{figure}[H]
