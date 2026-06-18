@@ -32,6 +32,16 @@ tracks. NDNsim closes the CP gap miniNDN could not - on face-level tracer counte
 alone, with no PIT access - and does so with the **same** detector miniNDN uses, so
 the whole study is unified under a single method.
 
+> **Update — detection floor (rate sweep).** The single-rate **100% / 0%-FPR** numbers
+> above were measured at *one* attacker rate, on data where the legitimate background
+> traffic decayed to zero mid-run (a catalog-exhaustion bug). A corrected, catalog-fixed
+> **rate sweep** (`NDNsim_best_data/`) re-measures detection against *live* traffic and
+> finds the real picture: **CP has a genuine detection floor** (≈100% above ~50 Hz,
+> degrading to ~21% at 10 Hz; the 90% crossing sits near 40–50 Hz) and a **real ~2%
+> false-positive rate** — not the trivial 0%. **IFA stays at 100% down to 10 Hz** and is
+> being probed at lower rates to find its floor (or explain why it has none). See
+> [`NDNsim_best_data/BESTDATA_FINDINGS.md`](NDNsim_best_data/BESTDATA_FINDINGS.md).
+
 ---
 
 ## Repository structure
@@ -62,6 +72,18 @@ minor_project_refactored/
     │   └── results/              raw tracer output (kept for full reproducibility)
     ├── processed/                derived CSVs (working reproduction data)
     └── figures/                  eda/ + detection/
+
+NDNsim_best_data/                ── RATE SWEEP / DETECTION FLOOR ──────────────
+├── BESTDATA_FINDINGS.md          catalog fix + real detection-floor results
+├── notebooks/                    01_preprocessing.ipynb  02_detection_floor.ipynb
+├── ndnsim-research-main/ndn-research/
+│   ├── scenarios/               catalog-fixed sims (NumberOfContents=300)
+│   └── results/                 raw swept traces (gitignored — in the bundle)
+├── processed/                    detection_floor.csv, attack_window_contrast.csv, ...
+└── figures/                      diagnostic/ (traffic health) + detection/ (floor)
+
+NDNsim_newdata/                  (superseded first sweep — dead-traffic bug; kept as record)
+for_friend.md                    spec for the top-up runs that pin both attacks' floors
 ```
 
 ---
@@ -85,6 +107,12 @@ minor_project_refactored/
    leans on satisfaction/timeout/interest-rate features instead.
 6. **Load-invariant ratio features matter for robustness** (miniNDN investigation):
    absolute rate features are load-dependent and brittle; ratios generalize.
+7. **The attacks have different detection floors** (rate sweep, `NDNsim_best_data/`).
+   Against *live* background traffic, **CP degrades gracefully** as the attacker slows
+   (≈100% above ~50 Hz → ~21% at 10 Hz; floor near 40–50 Hz) because its only signal is
+   volume; **IFA does not bend at all in 10–100 Hz** because its signature is qualitative
+   (timeouts/NACKs to the black-hole). The earlier "100% everywhere" reflected a
+   dead-traffic artifact, not detector invincibility; the FPR is a real ~2%.
 
 All training in both tracks is **unsupervised** - models/baselines are fit on normal
 traffic only; where labels exist (NDNsim) they are used purely for evaluation.
@@ -124,6 +152,8 @@ editing.
 
 - **Per-track results & figure catalogs:** `miniNDN/miniNDN_finding.md`,
   `NDNsim/NDNsim_finding.md`
+- **Detection floor (rate sweep):** `NDNsim_best_data/BESTDATA_FINDINGS.md`
+- **Pending top-up runs** (to pin both attacks' floors): `for_friend.md`
 - **miniNDN engineering investigation** (data-quality, load-invariant features):
   `miniNDN/REFACTOR_FINDINGS.md`
 - **NDNsim scenario reference:** `NDNsim/notebooks/scenarios_info.md`
