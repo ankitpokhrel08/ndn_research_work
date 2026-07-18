@@ -1,1 +1,36 @@
-% Mechanism — drafted in Task N
+% Mechanism
+\section{Why the Two Floors Differ}
+\label{sec:mechanism}
+
+The two floors measured in Section~\ref{sec:simulation}, CP detectable down to roughly 44\,Hz and IFA down to roughly 1.8\,Hz, sit an order of magnitude apart, and that gap is not an artifact of the detector, the feature set, or any one topology. It follows directly from what each attack does to the network. The method described in Section~\ref{sec:method} and the floor definition in Equation~\ref{eq:floor} are identical for both attacks; what differs is the signal each attack leaves for that method to find.
+
+Cache Pollution is purely volumetric. An attacker running CP requests content that is served, so every one of its Interests is satisfied exactly like a legitimate request; the cache-hit ratio it disturbs and the request volume it adds are the only marks it leaves. Its only tell, in other words, is that a consumer is busy, and a busy consumer is exactly what a legitimate consumer looks like under the Zipf-Mandelbrot background traffic of Section~\ref{sec:simulation}. As the junk rate is throttled down toward the rate an ordinary consumer already produces, the attacker's volume signature does not weaken gradually so much as it gets absorbed: the feature values it produces increasingly overlap the distribution normal traffic already occupies, and there is no second signal to fall back on once that overlap is large enough. Interest Flooding is qualitative instead. Every Interest the attacker sends toward the black-hole producer is, by construction, never satisfied, so each one directly drives the timeout ratio and the NACK ratio up and the satisfaction ratio down, regardless of how many Interests are actually sent. A single unanswered Interest is already a deviation from the normal pattern; a thousand are not qualitatively different from one. That is why the two attacks can produce detection curves separated by an order of magnitude even though they are run through the same detector against the same background.
+
+Figure~\ref{fig:mechanism} makes this concrete by plotting detection against attacker volume relative to the legitimate baseline rather than against raw rate. IFA is caught at roughly $1\times$ the baseline, essentially as soon as the attacker is sending at all, while CP is not reliably caught until roughly $10\times$ the baseline, the point at which its added volume can no longer hide inside the crowd. The comparison is sharpest at the two attacks' own floor rates: CP at 10\,Hz is the louder of the two in absolute terms, about $3.7\times$ the legitimate baseline, while IFA at 1\,Hz sits at only about $1.2\times$ that baseline, yet CP at 10\,Hz is detected far worse than IFA at 1\,Hz. Volume alone does not predict detectability; what an attack does with that volume does.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.66\textwidth]{fig_mechanism_contrast}
+    \caption{Detection versus attacker volume relative to the legitimate baseline. IFA is detected at about $1\times$ the baseline; CP requires about $10\times$. CP at 10\,Hz is louder ($3.7\times$ baseline) than IFA at 1\,Hz ($1.2\times$ baseline) yet detected far worse.}
+    \label{fig:mechanism}
+\end{figure}
+
+The feature-level evidence in Figure~\ref{fig:featsig} explains why the two curves in Figure~\ref{fig:mechanism} cross in the direction they do. Measured as a standard-deviation shift from normal during the attack window, CP's largest attacker-side shift is a pure-volume signature: the request-volume and cache-related counters move by about $+6\sigma$, a broad, first-order displacement that is unmistakable at high rates but is also, by construction, proportional to the rate itself, so it shrinks toward zero as the rate does. IFA's defining shift is smaller in magnitude but structurally different: the timeout ratio moves by about $+3.7\sigma$, and because that ratio is a function of what fraction of Interests fail rather than of how many Interests are sent, it does not dilute the same way as the attacker throttles down. A handful of unanswered Interests already pushes the ratio away from its clean baseline; the shift survives the rate collapsing almost to nothing, which is exactly the behavior Table~\ref{tab:sim-floor} in Section~\ref{sec:simulation} shows IFA holding onto down to 2\,Hz before it finally breaks at 1\,Hz.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.66\textwidth]{fig_feature_signature}
+    \caption{Attacker mean feature shift in the attack window, in standard deviations from normal. CP moves the volume and cache counters by about $+6\sigma$, a pure-volume signature; IFA's defining shift is the timeout ratio at about $+3.7\sigma$, a qualitative signature.}
+    \label{fig:featsig}
+\end{figure}
+
+This asymmetry is a property of the two attacks' mechanisms rather than of the network they run over. Figure~\ref{fig:heatmap} lays detection out over attacker rate and topology jointly, for both attacks, and the three topology rows within each attack are near-identical at every rate sampled: whatever separation exists between CP and IFA appears equally in the tree, the dumbbell, and the DFN mesh, and no topology moves either floor meaningfully. That invariance is consistent with the topology-independent detection already reported in Section~\ref{sec:simulation}, and it rules out the explanation that CP's floor is somehow an artifact of one network's caching geometry rather than of the attack's volumetric nature; a purely volumetric signal is diluted by the legitimate background wherever that background exists, and a purely qualitative one survives wherever it does not.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{fig_floor_heatmap}
+    \caption{Detection (\%) over attacker rate by topology for CP (left) and IFA (right). The three topology rows are near-identical at every rate, so the floor is a property of the attack, not the network.}
+    \label{fig:heatmap}
+\end{figure}
+
+Taken together, the three figures in this section support a single claim: the floor gap is set by what each attack is, not by where or how it is measured. An attack whose only signature is added volume can only ever be as detectable as its rate is distinguishable from the crowd it is hiding in, which pushes its floor up toward that crowd's own rate. An attack whose signature is a broken outcome, an Interest that is never answered, keeps that signature at any rate above zero, which pushes its floor down toward the point where the attacker is barely sending at all. The order-of-magnitude gap between CP's roughly 44\,Hz floor and IFA's roughly 1.8\,Hz floor is that mechanism made quantitative.
