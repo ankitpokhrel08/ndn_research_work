@@ -1,1 +1,126 @@
-% Method — drafted in Task N
+% Method
+\section{Method}
+\label{sec:method}
+
+\subsection{Platforms and Topologies}
+
+The detector is evaluated identically on two complementary platforms. \textbf{miniNDN} is an NDN network emulator built on Mininet that runs the real NDN Forwarding Daemon (NFD) inside isolated Linux network namespaces; because the forwarding stack is the genuine production code, counters collected from miniNDN carry real OS scheduling jitter, NFD buffering, and polling artifacts that a purely simulated environment cannot reproduce. \textbf{ndnSIM} \cite{mastorakis2015ndnsim} is an ns-3-based simulator that implements the NDN forwarding pipeline in software; it trades some of miniNDN's realism for deterministic, per-second ground truth and the throughput needed to run the multi-hundred-run attacker-rate sweep on which this paper's central result depends. Running the same detector, unmodified, on both platforms lets the emulation study establish how a real forwarding daemon behaves under attack, while the simulation study reuses that feature-engineering philosophy at a scale emulation cannot support.
+
+Both platforms share the same three topologies (Figure~\ref{fig:topologies}), so any difference observed between IFA and CP, or between platforms, can be attributed to the attack and the forwarding stack rather than to an inconsistent network shape. The \textbf{tree} topology has a single root router, modelling campus or enterprise networks in which traffic flows from consumer leaves through backbone routers to producer leaves. The \textbf{dumbbell} topology connects two stub networks through a shared bottleneck core, modelling wide-area configurations that concentrate PIT pressure at a small number of core routers during a traffic surge. The \textbf{DFN} topology is an irregular mesh derived from the Deutsches Forschungsnetz graph, with heterogeneous node degree and redundant paths, testing whether detection generalizes to a real-world network structure. All three topologies contain nine to twelve nodes on both platforms, with every node type, consumer, producer, and transit router, represented in the collected data.
+
+The two platforms run on different software stacks (Table~\ref{tab:software}). miniNDN runs on Ubuntu 22.04 with NFD and NLSR 22.12; consumer request rates vary between 40 and 80 Interests per second with natural Gaussian variance over a Zipf-distributed catalog, and counters are polled every 3 seconds. ndnSIM runs ndnSIM 2.x on ns-3.35 inside an Ubuntu 20.04 container, with tracer output collected every 1 second; each consumer issues a Zipf-Mandelbrot request process over a fixed catalog sized so the cache stays useful and the background traffic remains live throughout the run. Despite the differing polling intervals and traffic generators, both platforms feed the same downstream feature-engineering and detection pipeline.
+
+\begin{table}[t]
+\centering
+\caption{Software environment.}
+\label{tab:software}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component}        & \textbf{Tool / Library}   & \textbf{Version}  \\
+\midrule
+NDN emulation             & miniNDN                   & 0.4.0             \\
+NDN simulation            & ndnSIM on ns-3            & 2.x / ns-3.35     \\
+NDN forwarding daemon     & NFD                       & 22.12             \\
+Name-based routing        & NLSR                      & 22.12             \\
+Machine learning          & scikit-learn              & 1.4+              \\
+Data processing           & pandas, numpy             & latest stable     \\
+Model persistence         & joblib                    & latest stable     \\
+Runtime                   & Python                    & 3.10+             \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Feature Engineering}
+\label{sec:features}
+
+On miniNDN, ten behavioral features (Table~\ref{tab:features}) are computed per node per interval from NFD counter deltas and absolute state values, drawn from two lightweight commands, \textit{nfdc status} and \textit{nfdc cs info}. The set deliberately retains \textit{pit\_size} and \textit{pit\_growth\_rate}: PIT exhaustion is the textbook signature of IFA, so keeping these two lets the emulation study test directly whether that signature survives contact with a real forwarding daemon's polling behaviour, rather than assuming it in advance. On ndnSIM, nine face-level features are derived instead from the simulator's tracers: three rates, \textit{in\_interests\_rate}, \textit{out\_interests\_rate}, and \textit{in\_data\_rate}, and six ratios, \textit{cache\_hit\_ratio}, \textit{satisfaction\_ratio}, \textit{timeout\_ratio}, \textit{nack\_ratio}, \textit{interest\_amp} ($=\Delta\text{Out}/\Delta\text{In}$), and \textit{data\_ratio} ($=\Delta\text{InData}/\Delta\text{In}$). No PIT-derived feature is included in the ndnSIM set, a choice informed by the emulation-stage result that PIT counters do not discriminate attack from normal traffic at practical polling intervals.
+
+\begin{table}[t]
+\centering
+\caption{The ten miniNDN behavioral features.}
+\label{tab:features}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Feature}              & \textbf{Definition}                                                       & \textbf{Category} \\
+\midrule
+\textit{pit\_size}            & $\textit{nPitEntries}$ (absolute)                                         & State \\
+\textit{pit\_growth\_rate}    & $\Delta\textit{nPitEntries} / \Delta t$                                   & Rate  \\
+\textit{cs\_size}             & $\textit{nCsEntries}$ (absolute)                                          & State \\
+\textit{cache\_hit\_ratio}    & $\textit{nHits} / (\textit{nHits} + \textit{nMisses})$                    & Ratio \\
+\textit{satisfaction\_ratio}  & $\textit{nSat} / (\textit{nSat} + \textit{nUnsat})$                       & Ratio \\
+\textit{unsatisfied\_ratio}   & $\textit{nUnsat} / (\textit{nSat} + \textit{nUnsat})$                     & Ratio \\
+\textit{in\_interests\_rate}  & $\Delta\textit{nInInterests} / \Delta t$                                  & Rate  \\
+\textit{out\_interests\_rate} & $\Delta\textit{nOutInterests} / \Delta t$                                 & Rate  \\
+\textit{in\_data\_rate}       & $\Delta\textit{nInData} / \Delta t$                                       & Rate  \\
+\textit{nack\_rate}           & $\Delta(\textit{nInNacks} + \textit{nOutNacks}) / \Delta t$               & Rate  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All ratio features are set to zero when both numerator and denominator are zero, which happens during idle intervals in which a node forwarded no traffic; without this rule an idle interval records an artificial satisfaction ratio of zero and teaches the model that failure is normal, which measurably collapses attacker detection. Rate features are separately clipped to the [1st, 99th] percentile range computed on normal training data, to keep outliers from distorting the StandardScaler fit described below. \textit{nack\_rate} and \textit{pit\_growth\_rate} are the exception: both are identically zero throughout normal traffic, so their normal-data percentile range has zero width, and clipping them would clip away the entire attack-time signal before it reaches the model. These two features are therefore never clipped, on either platform.
+
+Absolute rate features carry a further caveat: they are load-dependent, so a normal run collected at a higher request rate than the training data can be false-flagged purely by the load difference. A ratio-only variant of the feature set (satisfaction ratio, cache-hit ratio, NACK rate, data-to-interest ratio, and forwarding ratio) is therefore evaluated separately as a load-invariant alternative, and it sustains detection across differing traffic loads at a low false-positive rate where the full absolute-rate set does not.
+
+\subsection{Isolation Forest Pipeline}
+
+Both feature sets feed the same two-step scikit-learn pipeline. A StandardScaler first normalizes every feature to zero mean and unit variance, so that features of very different magnitude, an absolute PIT count against a bounded ratio, contribute comparably to the anomaly score, and an IsolationForest is then fitted on the scaled output. The forest uses 200 isolation trees, a contamination parameter of 0.01, and a fixed random seed for reproducibility, and it is fitted exclusively on normal traffic: no labelled attack sample is ever seen during training. A single global model is trained per platform on the combined clean data pooled across all three topologies, rather than one model per topology, so the reported detection rates reflect a detector not tuned to any one network shape.
+
+Isolation Forest detects anomalies structurally rather than statistically. Each tree recursively partitions the feature space through random feature selection and random split values until every point is isolated in its own leaf; because anomalous points are few and different from the bulk of normal traffic, they are isolated in fewer splits, giving them a shorter path length on average. For an instance $x$ scored against an ensemble of trees built over $n$ training samples, the anomaly score is
+
+\begin{equation}
+\label{eq:iforest}
+s(x, n) = 2^{-\dfrac{E[h(x)]}{c(n)}}
+\end{equation}
+
+\noindent where $E[h(x)]$ is the mean path length of $x$ across all trees and
+
+\begin{equation}
+c(n) = 2H(n-1) - \frac{2(n-1)}{n}, \qquad H(i) = \ln(i) + 0.5772,
+\end{equation}
+
+\noindent is the expected path length of an unsuccessful search in a binary search tree, normalizing $s$ against training-set size. A score near 1 indicates a strong anomaly; a score near 0.5 is characteristic of normal instances. scikit-learn's \textit{decision\_function} reports a shifted, signed variant in which more negative values denote greater anomaly strength, and it is this signed score, not the raw $s(x,n)$, that the threshold calibration below operates on.
+
+\subsection{Threshold Calibration and Score Normalization}
+
+Rather than hand-tuning a fixed cutoff, the anomaly decision boundary $\theta$ is derived from the training score distribution itself: $\theta$ is set so that approximately 1\,\% of normal training samples fall on its anomalous side, consistent with the contamination parameter, which places $\theta$ at a raw \textit{decision\_function} value of $0.0$ (positive scores normal, negative anomalous). The fitted pipeline, $\theta$, the training score range $[s_{\min}, s_{\max}]$, and the feature column ordering are serialised together, so scoring at evaluation time is fully determined by the training run.
+
+For reporting and alerting, raw \textit{decision\_function} scores are mapped onto a 0--100 scale that anchors $\theta$ at 30, $s_{\max}$ at 100, and $s_{\min}$ at 0:
+
+\begin{equation}
+\hat{s} =
+\begin{cases}
+30 + \dfrac{s - \theta}{s_{\max} - \theta} \times 70 & \text{if } s \ge \theta \\[8pt]
+\dfrac{30 \times (s - s_{\min})}{\theta - s_{\min}} & \text{if } s < \theta,
+\end{cases}
+\end{equation}
+
+\noindent clipped to $[0, 100]$. Two thresholds on this scale are used throughout the evaluation. The \textbf{strict threshold (30\,\%)} corresponds exactly to the raw auto-calibrated boundary $\theta = 0.0$; a normalized score below it indicates a confident anomaly. The \textbf{operational threshold (50\,\%)} is a lower-sensitivity level that also catches samples whose raw score lies slightly above $\theta$ but whose position on the normalized scale still signals a deviation; it matters most for IFA, whose signature depresses the raw score only moderately, so reading the strict threshold alone would under-report it.
+
+\subsection{Detection-Floor Definition}
+\label{sec:floor-def}
+
+Reporting detection accuracy at a single attack rate says nothing about how an attacker who throttles down evades the detector, so this paper defines detection reliability as a function of attacker rate rather than as a single number. Let $D(r)$ denote the pooled detection rate (recall) over every attacker-labelled sample collected at attacker rate $r$, aggregated across all three topologies and every replicate seed run at that rate. Given the ordered set $R$ of attacker rates sampled by the rate sweep, the \textbf{detection floor} $r^{*}$ is the smallest sampled rate at and above which pooled detection never again drops below a 90\,\% reliability bar:
+
+\begin{equation}
+\label{eq:floor}
+r^{*} = \min\left\{\, r_i \in R \;:\; D(r_j) \ge 0.90 \text{ for all } r_j \in R,\ r_j \ge r_i \,\right\}.
+\end{equation}
+
+$r^{*}$ is an empirical quantity, not a closed-form threshold: it is measured, separately for each attack, by evaluating $D(r)$ at every sweep rate and locating the point below which reliable detection is no longer sustained. An attacker below $r^{*}$ escapes reliable detection at the false-positive rate the sweep otherwise holds; one above it does not. This definition is applied to both IFA and CP in the simulation study, where the two resulting floors differ by an order of magnitude, a difference this paper attributes to whether the attack's signature is volumetric or qualitative.
+
+\subsection{Evaluation Metrics}
+
+Detection performance on labelled test data is quantified with two threshold-dependent quantities, computed at both the 30\,\% and 50\,\% normalized-score thresholds and, on the simulation platform, pooled per attacker rate to obtain the $D(r)$ used in Equation~\ref{eq:floor}:
+
+\begin{equation}
+\text{Detection Rate} = \frac{TP}{TP + FN}, \qquad
+\text{FPR} = \frac{FP}{FP + TN}.
+\end{equation}
+
+Statistical separability between attack-time and normal-time score distributions, independent of where any threshold is drawn, is assessed with the two-sample Kolmogorov--Smirnov test. Its $D$-statistic is the maximum absolute distance between the two empirical cumulative distribution functions,
+
+\begin{equation}
+D = \sup_{x} \left| F_{\text{normal}}(x) - F_{\text{attack}}(x) \right|,
+\end{equation}
+
+\noindent and a larger $D$ indicates the two distributions are more separable, regardless of threshold placement. Detection rate, false-positive rate, and the KS $D$-statistic are reported together throughout, since a detector can score well on one while masking a weakness the others expose.
