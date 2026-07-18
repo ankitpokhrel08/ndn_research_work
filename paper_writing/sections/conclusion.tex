@@ -1,1 +1,11 @@
-% Conclusion — drafted in Task N
+% Conclusion
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper presented a single unsupervised Isolation Forest detector, trained only on clean traffic, evaluated on two independent NDN platforms, miniNDN's emulation of the real NDN Forwarding Daemon and the ndnSIM simulator, across the same three topologies. One detector, one training regime, no labelled attack data: the design was deliberately shared end to end so that differences in outcome could be attributed to the attacks and the platforms rather than to inconsistent methodology.
+
+The emulation study corrects the conventional picture of the Interest Flooding Attack. The global model identifies the attacker node at 91.2--98.7\,\% across the three topologies at a false-positive rate below 4.3\,\%, but PIT-based features, the textbook signature of IFA, turn out to be non-discriminating at practical polling intervals; satisfaction ratio, cache-hit ratio, and NACK rate carry the signal instead. Cache Pollution leaves no usable footprint in this feature set, a negative result that motivated the simulation study.
+
+The simulation study supplies the paper's central finding. An attacker-rate sweep locates two detection floors that are an order of magnitude apart and topology-invariant: Cache Pollution, a volumetric attack, remains reliably detectable down to roughly 44\,Hz, while Interest Flooding, whose signature is qualitative rather than volumetric, remains detectable down to roughly 1.8\,Hz, both at a realistic 1--2\,\% false-positive rate. The gap is mechanistic rather than incidental: a purely volumetric attack cannot hide below the legitimate background rate without ceasing to be effective, while a qualitative attack can throttle down close to that rate and still remain invisible.
+
+Taken together, these results indicate that the security-relevant limit on unsupervised NDN anomaly detection is not peak detection accuracy at a single, easily separable attack rate, but the mechanism-dependent floor below which an attacker can operate undetected. Reporting a floor rather than a peak reframes what a detector's evaluation should answer: not whether the attack can be caught, but how quiet the attacker can be before it stops being caught. This distinction is what future work on stealthier variants of both attacks, and on complementary detection strategies for content-integrity threats, should be measured against.
