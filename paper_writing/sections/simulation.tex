@@ -1,1 +1,120 @@
-% Simulation — drafted in Task N
+% Simulation
+\section{Simulation Study: Locating the Detection Floor}
+\label{sec:simulation}
+
+Cache Pollution left no usable behavioral footprint on miniNDN: the emulation traffic model's cache-hit ratio was already close to zero at consumer nodes, so CP had nothing visible left to degrade, and its requests were still answered, so the satisfaction ratio stayed high throughout the attack (Section~\ref{sec:emulation}). That negative result is not a dead end but a diagnosis, it identifies exactly the environment CP needs to be evaluated honestly: a cache that is doing meaningful work in the first place. ndnSIM~\cite{mastorakis2015ndnsim} supplies that environment, and it supplies something else the emulation platform cannot: the throughput to run hundreds of runs at a swept attacker rate. This section reuses the same global Isolation Forest, the same feature-engineering philosophy, and the same three topologies from Section~\ref{sec:method}, but asks a different question of them. Rather than reporting detection at one attack intensity, it sweeps the attacker rate down until detection breaks, and locates, separately for IFA and CP, the detection floor defined in Equation~\ref{eq:floor}: the lowest attacker rate at which the detector still holds 90\,\% reliability against live background traffic.
+
+\subsection{Setup and the Attacker-Rate Sweep}
+
+Every scenario runs for 600\,s. Attacks inject at $t = 300$\,s, splitting each run into a 300\,s normal segment and a 300\,s attack segment, and the detector is fit on the first 200\,s of normal traffic only, so no attack-time sample is ever seen during training. All scenario types share an identical legitimate background, so the only difference between a normal run and an attack run is the attack itself: every consumer runs a Zipf-Mandelbrot request process at 10 interests/s over a catalog of $N = 300$ distinct names. The catalog size is not incidental. An earlier, smaller catalog exhausted the request stream about 30\,s into each run, after which the consumers fell silent and the background died; a model trained on that traffic learns that ``normal'' means an idle network, and every subsequent detection number is measured against silence rather than against a working system. At $N = 300$ the legitimate consumers keep emitting at roughly 4.4 interests/s each for the full 600\,s, including through the attack window, while the cache stays useful enough for CP to have something to pollute (Figure~\ref{fig:traffic-health}). Every result reported below is measured against this live, unbroken background.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.75\textwidth]{fig_legit_traffic_health}
+    \caption{Legitimate consumer interest rate over time (ndnSIM), attack window shaded. The background stays flat and active for the full 600\,s, so detection is measured against a busy network rather than a silent one.}
+    \label{fig:traffic-health}
+\end{figure}
+
+The two attacks exercise the two data structures the introduction identifies as NDN's attack surface, in as pure a form as the simulator allows. In the \textbf{IFA} scenario, the attacker launches four concurrent constant-bit-rate Interest streams, in a fixed 40:30:20:10 rate ratio scaled to the chosen total rate, toward a \textit{/evil} namespace served by a co-located black-hole producer that registers the prefix but never returns Data. Every attacker Interest is therefore destined to time out, generating genuine PIT pressure, timeouts, and NACKs rather than a simulator artifact. In the \textbf{CP} scenario, two attacker consumers each request 50 distinct junk names under \textit{/ndn/junk/} at a combined rate scaled to the sweep point; because the junk namespace is served, producers answer every request, so the junk Data enters router Content Stores through ordinary caching and evicts entries a legitimate population would otherwise have reused, raising the legitimate cache-miss rate. The name diversity is held fixed across the sweep, so only the per-name request frequency changes with rate.
+
+To locate each floor precisely, the attacker rate is swept and replicated over seeds, sampled densely where each attack's own floor is expected to lie (Table~\ref{tab:sim-sweep}). Every configuration runs on all three topologies, giving \textbf{297 runs} in total: 15 normal, 156 IFA, and 126 CP, each emitting per-second ground-truth labels alongside the tracer output described in Section~\ref{sec:method}.
+
+\begin{table}[t]
+\centering
+\caption{ndnSIM attacker-rate sweep. Floor-region rates use five seeds; the two highest rates are single-seed anchors. Rates are per attacker (CP has two attackers).}
+\label{tab:sim-sweep}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Scenario} & \textbf{Attacker rates (interests/s)} & \textbf{Seeds} \\
+\midrule
+Normal & (no attack) & 1--5 \\
+\midrule
+\multirow{2}{*}{IFA}
+  & 1, 2, 4, 6, 8, 10, 12, 15, 20, 30 & 1--5 \\
+  & 50, 100 & 1 (anchor) \\
+\midrule
+\multirow{2}{*}{CP}
+  & 10, 12, 15, 20, 30, 35, 40, 45 & 1--5 \\
+  & 50, 100 & 1 (anchor) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Detection and Localization at a Representative Rate}
+
+Before turning to the floor, it is worth establishing that the detector works at all under simulation, at a rate high enough to be unambiguous. Table~\ref{tab:sim-lift} reports the mean anomaly score immediately before and after attack onset ($t = 301$\,s), pooled across topologies: the attacker score jumps from a pre-attack baseline around 8.4 to 78.4 for IFA and to 100.0, the scale's maximum, for CP, while benign consumers stay near 2 throughout. For comparison, the mean score over ordinary normal traffic across all three topologies is 18.4, so the post-onset attacker scores sit far above anything the clean baseline produces. The jump is not gradual: Figure~\ref{fig:sim_timeseries} shows the attacker score crossing the alarm within about one second of the $t = 300$\,s onset for both attacks, a detection latency close to the simulator's 1\,s tracer resolution.
+
+\begin{table}[t]
+\centering
+\caption{ndnSIM mean anomaly score before and after attack onset ($t = 301$\,s), global model. Benign is the mean over non-attacker consumers.}
+\label{tab:sim-lift}
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+\textbf{Topology} & \textbf{Attack} & \textbf{Attacker pre} & \textbf{Attacker post} & \textbf{Benign post} & \textbf{Lift} \\
+\midrule
+DFN      & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+DFN      & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
+Dumbbell & IFA & 8.7 & 78.4  & 2.7 & \textbf{69.7} \\
+Dumbbell & CP  & 8.4 & 100.0 & 3.4 & \textbf{91.6} \\
+Tree     & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+Tree     & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
+\midrule
+\multicolumn{5}{l}{Normal (all topologies), mean anomaly score} & \textbf{18.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As on the emulation platform, the detector does not merely flag the attacker; it traces the attack's reach through the network. Figure~\ref{fig:sim_spatial} plots the mean anomaly score by node role and by hop distance from the attacker, and the same spatial gradient reported in Section~\ref{sec:emulation} reappears here: attacker (78.4 for IFA, 100.0 for CP) $>$ on-path router (75.4 / 88.7) $>$ producer (60.7 / 63.7) $>$ off-path router ($\approx 36$) $>$ benign consumer ($\approx 2$). The ordering tracks forwarding-path membership rather than raw hop count, exactly as it did under a real forwarding daemon, so the spatial fingerprint is a property of how each attack propagates through the network rather than an artifact of one platform's traffic model.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_score_timeseries}
+    \caption{ndnSIM anomaly score over time for the attacker nodes against the normal band. The attacker crosses the alarm within about one second of the $t = 300$\,s onset for both attacks.}
+    \label{fig:sim_timeseries}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_spatial_localization}
+    \caption{Mean anomaly score by node role and score versus hop distance (ndnSIM). The score traces the attack's forwarding path rather than decaying with hop count.}
+    \label{fig:sim_spatial}
+\end{figure}
+
+\subsection{The Detection Floor}
+\label{sec:sim-floor}
+
+At the rate examined above, both attacks are detected essentially perfectly, which is exactly why that rate is uninformative about how stealthy an attacker can afford to be. Applying the detection-floor definition of Equation~\ref{eq:floor} to every sweep point instead answers the question that matters: as the attacker throttles down toward the legitimate background, at what rate does detection stop being reliable? Table~\ref{tab:sim-floor} reports pooled attacker-node detection against rate, aggregated over all three topologies and every replicate seed.
+
+\begin{table}[t]
+\centering
+\caption{ndnSIM attacker-node detection (\%) versus rate, pooled over topologies and seeds. ``--'' means the rate was not sampled for that attack.}
+\label{tab:sim-floor}
+\begin{tabular}{@{}lcccccccccc@{}}
+\toprule
+\textbf{Rate (Hz)} & 1 & 2 & 10 & 20 & 30 & 35 & 40 & 45 & 50 & 100 \\
+\midrule
+\textbf{CP}  & -- & -- & 21 & 42 & 60 & 71 & 83 & 92 & 100 & 100 \\
+\textbf{IFA} & 60 & 99.9 & 100 & 100 & 100 & -- & -- & -- & 100 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The two curves in Table~\ref{tab:sim-floor} do not fail in the same way. \textbf{CP degrades gracefully}: detection falls from saturation at 50\,Hz and above down through 92\,\% at 45\,Hz, 83\,\% at 40\,Hz, 71\,\% at 35\,Hz, and 60\,\% at 30\,Hz, to about 21\,\% at 10\,Hz, tracking the attacker's rate smoothly the whole way down. Its 90\,\% crossing lands in the 40--45\,Hz band that was swept, at approximately \textbf{44\,Hz}. That gradual slope is itself informative: because CP's only signature is added request volume, its detectability is a function of how far above the legitimate background the attacker's rate sits, and as that rate approaches the background it simply sinks into it. \textbf{IFA fails almost nowhere in the range sampled}: detection holds at 100\,\% at every rate from 2\,Hz up through 100\,Hz, and only collapses to 60\,\% at 1\,Hz. Interpolating that near-vertical drop places IFA's 90\,\% crossing in the 1--2\,Hz band, at approximately \textbf{1.8\,Hz}, roughly the volume a single legitimate consumer produces. The two floors are an order of magnitude apart, and Figure~\ref{fig:floor-headline} puts them on the same axis: CP's floor sits at the high end of the swept range, IFA's at the low end, with the dashed 90\,\% line separating reliable detection from chance for each attack in a visibly different place.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.74\textwidth]{fig_floor_headline}
+    \caption{ndnSIM detection floor against live traffic. CP (volumetric) has a high floor (about 44\,Hz); IFA (qualitative timeout/NACK signature) has a floor an order of magnitude lower (about 1.8\,Hz). Shaded bands are $\pm 1$\,SD over topologies and seeds; the dashed line marks 90\,\% detection.}
+    \label{fig:floor-headline}
+\end{figure}
+
+Two caveats bound how the floor numbers above should be read. First, the two highest rates swept for each attack, 50\,Hz and 100\,Hz, are single-seed anchors rather than five-seed averages; they confirm that detection stays saturated well above the floor but should not be read with the same statistical weight as the floor-region points. Second, a floor measured against an idle network would be meaningless, since an idle background gives a trivial 0\,\% false-positive rate and inflates any apparent floor; every number in Table~\ref{tab:sim-floor} is instead measured against the live traffic established earlier in this section, at a realistic false-positive rate of 1--2\,\% on clean traffic (about 0.8--1.0\,\% in the tree and DFN topologies, about 2\,\% in the dumbbell), so the floor reflects a genuine operating limit rather than an artifact of a silent network.
+
+Neither floor is an accident of one network's shape. Figure~\ref{fig:detection-floor} breaks the same sweep out per topology, with per-seed spread shown alongside each curve, and the three topology curves are essentially superimposed for both attacks: the floor is a property of the attack's mechanism, not of whether the network is a tree, a dumbbell, or a mesh. That the two floors sit an order of magnitude apart, and that each holds regardless of topology, is the central quantitative result of this paper. Why they differ by that much, and specifically why CP's signature washes out gradually while IFA's holds until it nearly disappears, is a question about mechanism rather than measurement, and it is taken up directly in the next section.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.9\textwidth]{fig_detection_floor}
+    \caption{Detection floor per topology (CP left, IFA right) with per-seed spread. The three topology curves are essentially superimposed and the per-seed spread is tight, so the floor is reproducible and topology-independent.}
+    \label{fig:detection-floor}
+\end{figure}
