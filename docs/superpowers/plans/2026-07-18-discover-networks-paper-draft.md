@@ -92,16 +92,16 @@ git commit -m "scaffold discover networks paper (template, main.tex, check.sh)"
 
 **Interfaces:**
 - Produces: BibTeX keys used by all later `\cite`s. **Canonical key list** (later tasks must use exactly these):
-  `zhang2014ndn`, `shah2023security`, `xu_persistent_detection`, `liu2008isolation`, `xing2021isolation`, `liu2025xgboost`, `mastorakis2016ndnsim`, `caching_survey`, `ref_pb1` (rename once identified).
+  `zhang2010ndn`, `shah2023security`, `xu_persistent_detection`, `liu2008isolation`, `xing2021isolation`, `liu2025xgboost`, `mastorakis2015ndnsim`, `caching_survey`, `ref_pb1` (rename once identified).
 
 - [ ] **Step 1: Read each PDF's front matter to extract verified metadata.** Open page 1 (and page 2 if needed) of each file in `Citations/` with the Read tool and record title, authors, venue, year, volume/pages, DOI:
   - `anomaly_isolation_forest_ndn.pdf` → **verified:** Xing, Chen, Hou, Zhou, Dong, Zeng, Luo, Ma. "Isolation Forest-Based Mechanism to Defend against Interest Flooding Attacks in Named Data Networking." *IEEE Communications Magazine*, Mar 2021. → `xing2021isolation`
   - `futureinternet-17-00206-v2.pdf` → **verified:** Liu, Yu, Wu, Peng. "XGBoost-Based Detection of DDoS Attacks in Named Data Networking." *Future Internet* 2025, 17(5):206. DOI 10.3390/fi17050206. → `liu2025xgboost`
   - `Isolation_Forest.pdf` → Liu, Ting, Zhou. "Isolation Forest." *ICDM* 2008. → `liu2008isolation`
-  - `Named_data_networking_NDN_project_vanjacobson.pdf` → Zhang et al. "Named Data Networking." *ACM SIGCOMM CCR* 44(3), 2014. → `zhang2014ndn`
+  - `Named_data_networking_NDN_project_vanjacobson.pdf` → Zhang et al. "Named Data Networking." *ACM SIGCOMM CCR* 44(3), 2014. → `zhang2010ndn`
   - `Security_and_Integrity_Attacks_in_Named_Data_Networking_A_Survey.pdf` → Shah et al. (verify authors/venue/year). → `shah2023security`
   - `Towards Persistent Detection of DDoS Attacks in NDN.pdf` → Xu et al. (verify). → `xu_persistent_detection`
-  - `ndn-0028-1-ndnsim-v2.pdf` → Mastorakis, Afanasyev, Zhang. "ndnSIM 2: An updated NDN simulator for NS-3." NDN Tech Report NDN-0028, 2016. → `mastorakis2016ndnsim`
+  - `ndn-0028-1-ndnsim-v2.pdf` → Mastorakis, Afanasyev, Zhang. "ndnSIM 2: An updated NDN simulator for NS-3." NDN Tech Report NDN-0028, 2016. → `mastorakis2015ndnsim`
   - `Caching_on_Named_Data_Network_a_Survey_and_Future_.pdf` → caching survey (verify authors/venue/year). → `caching_survey`
   - `1060-802-1-PB1.pdf` → **identity unknown; open and verify before use.** → `ref_pb1` (rename to real key).
 
@@ -185,7 +185,7 @@ git commit -m "add selected figures for paper"
 - Para 4: This paper — one unsupervised Isolation Forest, two platforms, an attacker-rate sweep that measures both floors.
 - **Contribution bullets** (itemize, mirror the `Citations/` style): (1) detection floor as the security metric; (2) two floors an order of magnitude apart, mechanistically explained; (3) one detector, cross-platform, topology-invariant; (4) PIT-feature myth correction.
 - **Roadmap sentence:** "The remainder of this paper is organised as follows…" mapping Sections 2–8.
-- Reference `\ref{fig:topologies}` and `\cite{zhang2014ndn}` at first NDN mention.
+- Reference `\ref{fig:topologies}` and `\cite{zhang2010ndn}` at first NDN mention.
 
 - [ ] **Step 1: Write introduction** into `sections/introduction.tex` (include `\label{fig:topologies}` on the topologies figure here or in Method — put it here).
 - [ ] **Step 2: Verify.** `bash paper_writing/check.sh` → `OK` (topologies figure may report missing until Task 3 supplies it; acceptable, note it).
@@ -199,7 +199,7 @@ git commit -m "add selected figures for paper"
 - Modify: `paper_writing/sections/related-work.tex`
 
 **Content spec (adapt `final_report.tex:216-236`; synthesise, don't list; ~700–1000 words):**
-- Subsection flow: (a) NDN security & attack surveys — `\cite{zhang2014ndn,shah2023security,caching_survey}`; (b) IFA/CP detection & DDoS — `\cite{xu_persistent_detection,liu2025xgboost}`, noting supervised/labeled-data limits and single-rate evaluation; (c) Isolation Forest and its NDN application — `\cite{liu2008isolation,xing2021isolation}`, noting IFDM uses four PIT-derived features; (d) the simulator baseline `\cite{mastorakis2016ndnsim}`; (e) `ref_pb1` placed by topic once identified.
+- Subsection flow: (a) NDN security & attack surveys — `\cite{zhang2010ndn,shah2023security,caching_survey}`; (b) IFA/CP detection & DDoS — `\cite{xu_persistent_detection,liu2025xgboost}`, noting supervised/labeled-data limits and single-rate evaluation; (c) Isolation Forest and its NDN application — `\cite{liu2008isolation,xing2021isolation}`, noting IFDM uses four PIT-derived features; (d) the simulator baseline `\cite{mastorakis2015ndnsim}`; (e) `ref_pb1` placed by topic once identified.
 - Close with the four research gaps this paper closes (floor, PIT-myth, cross-platform, per-node localization) — the bridge into the contributions.
 
 - [ ] **Step 1: Write related work** into `sections/related-work.tex`.
