@@ -1,0 +1,56 @@
+% paper_writing/main.tex
+% Target venue: Discover Networks (Springer, open access, ISSN 3004-9792)
+%
+% TODO-TEMPLATE: replace preamble with sn-jnl.cls before submission.
+% The official Springer Nature `sn-jnl` template could not be downloaded in
+% this environment (springernature.com template zip returned 404, no CTAN
+% package named sn-jnl, GitHub mirror not found). This fallback preamble
+% uses a standard article class configured to match sn-jnl's citation style
+% (numbered, via natbib) so the draft is compilable. Swap in the real
+% sn-jnl.cls and its bibliography style (e.g. sn-mathphys-num.bst) at
+% submission time.
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{natbib}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{subcaption}
+\usepackage{hyperref}
+
+\graphicspath{{figures/}}
+
+\title{Detecting Network Anomalies in Named Data Networking Through Isolation Forest-Based Behavioral Analysis}
+
+\author{
+  Ankit Pokhrel \and
+  Asmit Phuyal \and
+  Darshan Kumar Paudyal \and
+  Babu R. Dawadi\thanks{Corresponding author.} \\[1ex]
+  Department of Electronics \& Computer Engineering, \\
+  Pulchowk Campus, Institute of Engineering, \\
+  Tribhuvan University, Lalitpur, Nepal
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\input{sections/abstract}
+\input{sections/introduction}
+\input{sections/related-work}
+\input{sections/method}
+\input{sections/emulation}
+\input{sections/simulation}
+\input{sections/mechanism}
+\input{sections/discussion}
+\input{sections/conclusion}
+\input{sections/declarations}
+
+\bibliographystyle{unsrtnat}
+\bibliography{references}
+
+\end{document}
