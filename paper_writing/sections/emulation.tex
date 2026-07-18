@@ -1,1 +1,142 @@
-% Emulation — drafted in Task N
+% Emulation
+\section{Emulation Study: Interest Flooding on miniNDN}
+\label{sec:emulation}
+
+The emulation study runs the global Isolation Forest detector described in Section~\ref{sec:method} against Interest Flooding on miniNDN's real NFD forwarding stack. Attacker node c1 floods each topology with Interests for names that do not resolve, so every request it issues is destined to time out rather than be satisfied; the detector never sees a labelled attack sample during training, and the same model, trained once on pooled clean traffic from all three topologies, is evaluated unmodified against tree, dumbbell, and DFN. Because the attack, the traffic model, and the polling interval are all fixed by the real NFD forwarding stack rather than by a simulator's approximation of it, this study is where the paper's assumptions about IFA's behavioral signature are first tested against genuine forwarding-daemon dynamics, before a much larger set of attacker rates is swept on the simulation platform.
+
+\subsection{Detection and False-Positive Rate}
+
+On held-out normal traffic the global model's false-positive rate stays low at both operating points (Table~\ref{tab:emu-fpr}): at the strict 30\,\% threshold it never exceeds 1.00\,\%, and even at the more permissive operational 50\,\% threshold it stays under 4.3\,\% in every topology. Figure~\ref{fig:emu_score_dist} shows why: the normal and IFA anomaly-score distributions are cleanly separated in all three topologies, with normal traffic concentrated near the high-score end of the scale and attacker traffic pushed toward the anomalous region well before either threshold is reached.
+
+\begin{table}[t]
+\centering
+\caption{Normal-traffic false-positive rate, global model (attacker-labelled intervals flagged on clean data).}
+\label{tab:emu-fpr}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Threshold} & \textbf{Tree} & \textbf{Dumbbell} & \textbf{DFN} \\
+\midrule
+@30\,\% (strict)       & 0.19\,\% & 1.00\,\% & 0.64\,\% \\
+@50\,\% (operational)  & 1.08\,\% & 4.27\,\% & 4.10\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{emu_score_dist}
+    \caption{Normal versus IFA normalized anomaly-score distributions for the three topologies (global model). Normal traffic concentrates in the high-score (normal) region while IFA traffic shifts toward the anomalous region, crossing the 30\,\% and 50\,\% thresholds.}
+    \label{fig:emu_score_dist}
+\end{figure}
+
+Against this low false-positive floor, attacker c1 is detected at high rates in every topology, without any topology-specific retraining (Table~\ref{tab:emu-attacker-det}). Detection is weakest in the tree, where it still exceeds 89\,\% at the strict threshold, and strongest in the dumbbell, where it reaches 98.5\,\%. The gap between the strict and operational thresholds is narrow throughout, indicating that most attacker windows are scored well past the strict boundary rather than clustering just beyond it.
+
+\begin{table}[t]
+\centering
+\caption{Attacker node c1 detection rate, global model.}
+\label{tab:emu-attacker-det}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Topology} & \textbf{Detection @30\,\%} & \textbf{Detection @50\,\%} \\
+\midrule
+Tree     & 89.1\,\% & 91.2\,\% \\
+Dumbbell & 98.5\,\% & 98.7\,\% \\
+DFN      & 96.7\,\% & 96.8\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-Node Spatial Fingerprint}
+
+Because the detector operates independently at every node, it does not merely flag c1; it traces the shape of the attack across the network. Figure~\ref{fig:emu_pernode} shows the per-node detection rate in each topology. Backbone and other on-path routers, the nodes that must carry c1's flood toward its unreachable destinations, are flagged at 90--99\,\%, essentially matching the attacker itself, while nodes on branches the flood never reaches stay close to their normal-traffic baseline. The on-path producer p1, which lies at the end of c1's forwarding path in every topology, is flagged as high as 90.5\,\%, whereas the off-path producer p2 remains near baseline throughout. This on-path/off-path split holds cleanly in the dumbbell and DFN topologies, where redundant paths let unaffected branches carry traffic unperturbed.
+
+Table~\ref{tab:emu-spatial} breaks this pattern out per topology at the operational threshold. In the tree, backbone routers r1--r2 sit at 90--90.4\,\%, while the off-path leaf routers r3--r4 fall to 18--22\,\%, and producer p1 clears 90.5\,\% against p2's 30.0\,\%. The dumbbell shows the sharpest contrast: every on-path router, including the bottleneck, sits at 98.7\,\%, while the single off-path router r4 drops to 2.0\,\% and the off-path producer p2 to 2.2\,\%. DFN falls in between, with the on-path core routers r1--r2 at 97\,\% against the off-path edge routers r3--r4 at 7.7--8.8\,\%. In every topology, detection rate at a router or producer tracks whether that node sits on c1's forwarding path, not how close it is to the attacker in hop count; the anomaly score is, in effect, a map of the attack's reach through the network, recovered without any access to routing tables.
+
+\begin{table}[t]
+\centering
+\caption{Spatial propagation of IFA detection (@50\,\%, global model).}
+\label{tab:emu-spatial}
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{Topology} & \textbf{Node group (role)} & \textbf{Detection @50\,\%} \\
+\midrule
+Tree     & r1, r2 (backbone, on-path)      & 90--90.4\,\% \\
+Tree     & r3, r4 (leaf, off-path)         & 18--22\,\% \\
+Tree     & p1 / p2 (on-path / off-path producer) & 90.5\,\% / 30.0\,\% \\
+Dumbbell & r1, r2, r3, bottleneck (on-path) & 98.7\,\% \\
+Dumbbell & r4 (off-path)                    & 2.0\,\% \\
+Dumbbell & p1 / p2                          & 72.4\,\% / 2.2\,\% \\
+DFN      & r1, r2 (core, on-path)           & 97\,\% \\
+DFN      & r3, r4 (edge, off-path)          & 7.7--8.8\,\% \\
+DFN      & p1 / p2                          & 46.5\,\% / 2.3\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_tree}
+        \caption{Tree}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_dumbbell}
+        \caption{Dumbbell}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_dfn}
+        \caption{DFN}
+    \end{subfigure}
+    \caption{Per-node IFA detection rate (global model) for the three topologies. The attacker and on-path routers and producers are strongly detected; off-path nodes remain low, except in the Tree topology, where the flood reaches every branch.}
+    \label{fig:emu_pernode}
+\end{figure}
+
+The tree topology is the exception, and it is informative rather than a failure. Because every consumer's traffic funnels through the same shared backbone routers r1--r2 before reaching a producer, c1's flood saturates that shared infrastructure and generates NACKs that propagate outward to branches c1 never directly touches. Benign consumers c2--c6 are consequently elevated to 51--58\,\% detection at the operational threshold, an order of magnitude above their dumbbell and DFN counterparts. This is a genuine network effect, not a detector artifact: in a hierarchical topology with a single shared core, IFA degrades service quality network-wide rather than remaining a point attack confined to the flooded consumer's own path, and the per-node detection pattern in Figure~\ref{fig:emu_pernode} captures that spillover correctly rather than over-flagging.
+
+\subsection{The PIT-Feature Myth}
+\label{sec:pit-myth}
+
+The feature set retains \textit{pit\_size} and \textit{pit\_growth\_rate} specifically to test the textbook expectation that IFA manifests as PIT exhaustion (Section~\ref{sec:features}). Under the emulation traffic model, that expectation does not hold. Table~\ref{tab:emu-ks} reports the Kolmogorov--Smirnov $D$-statistic, averaged across topologies, between the attacker's normal-time and attack-time distribution for each feature: \textit{pit\_size} separates attack from normal with a mean $D$ of only 0.096, and \textit{pit\_growth\_rate} manages just 0.028, both far below the level needed for a feature to carry usable signal. At NFD's 3-second polling interval, PIT entries fill and drain between successive polls, so the sustained PIT buildup the textbook signature assumes never becomes an observable, persistent counter value; whatever exhaustion occurs is transient and invisible to interval-sampled monitoring.
+
+\begin{table}[t]
+\centering
+\caption{KS D-statistic for the attacker node c1 (normal vs.\ IFA), by feature, averaged across topologies.}
+\label{tab:emu-ks}
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{Feature} & \textbf{Mean $D$} \\
+\midrule
+satisfaction\_ratio  & 0.947 \\
+unsatisfied\_ratio   & 0.947 \\
+cache\_hit\_ratio    & 0.939 \\
+in\_interests\_rate  & 0.941 \\
+nack\_rate           & 0.929 \\
+in\_data\_rate       & 0.899 \\
+cs\_size             & 0.893 \\
+pit\_size            & 0.096 \\
+pit\_growth\_rate    & 0.028 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The features that do the discriminating are the ones the PIT-exhaustion narrative treats as secondary: satisfaction ratio, cache-hit ratio, and NACK rate all separate attack from normal almost perfectly ($D > 0.9$, $p < 10^{-200}$), a pattern that holds at the attacker and propagates, attenuated, to the on-path routers and producer identified in Figure~\ref{fig:emu_pernode}. Figure~\ref{fig:emu_ks_heatmap_tree} shows this separability broken out node by feature for the tree topology: the attacker and on-path nodes light up on satisfaction, NACK, and cache-hit features while the PIT columns stay uniformly flat, including at the attacker itself. Figure~\ref{fig:emu_feature_importance} corroborates the same conclusion from a different angle, permutation-based feature importance on the fitted model: satisfaction-, NACK-, and cache-hit-derived features dominate the ranking while the PIT-based features contribute negligibly. Together the KS test and the permutation importance correct the PIT-exhaustion assumption directly rather than by omission, which is why the feature set carries satisfaction ratio, cache-hit ratio, and NACK rate as its primary discriminators rather than any PIT-derived count.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{emu_ks_heatmap_tree}
+    \caption{KS D-statistic heatmap (Tree), node by feature. Satisfaction, NACK, and cache-hit features separate the attacker and on-path nodes; PIT features are uniformly non-discriminating.}
+    \label{fig:emu_ks_heatmap_tree}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.82\textwidth]{emu_feature_importance}
+    \caption{Permutation-based feature importance on the IFA data (global model). Satisfaction-, NACK-, and cache-hit-derived features dominate; PIT-based features contribute negligibly.}
+    \label{fig:emu_feature_importance}
+\end{figure}
+
+\subsection{Cache Pollution: A Negative Result}
+
+Cache Pollution was also run against the miniNDN emulation, and it produced no usable behavioral signature. CP's entire mechanism is to lower the cache-hit ratio by requesting unpopular content that evicts entries a legitimate population would otherwise reuse, but under the emulation traffic model the baseline cache-hit ratio at consumer nodes is already close to zero: there is essentially nothing left for the attack to degrade. The satisfaction ratio, the feature set's other strong discriminator, offers no help either, since polluted Interests are still answered by producers and so the ratio stays high throughout the attack. The result is a detector with nothing distinctive to key on: CP-time feature distributions in this setup are statistically indistinguishable from normal traffic.
+
+This negative result is itself a finding, not a dead end. It shows that detecting Cache Pollution behaviorally requires an environment in which the cache is doing meaningful work in the first place, so that pollution has something to visibly disrupt. The miniNDN traffic model does not provide that environment; the ndnSIM simulation study, with its larger catalog and an active, useful cache baseline, does, and it is there that Cache Pollution's detectability is properly characterized.
