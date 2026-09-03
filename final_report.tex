@@ -1,0 +1,972 @@
+% IOE BE Project Final Report
+% Template by Santosh Giri, Assistant Professor, DOECE, Pulchowk Campus, IOE, TU
+\documentclass[12pt]{report}
+\usepackage{xcolor}
+\usepackage[utf8]{inputenc}
+\usepackage{natbib}
+\usepackage[left=1.0in,right=1.0in,top=.8in,bottom=.8in]{geometry}
+\usepackage{float}
+\linespread{1.3}
+\usepackage{graphicx}
+\usepackage{rotating}
+\usepackage{amsmath}
+\usepackage{titlesec}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{xurl} % in preamble
+\hypersetup{colorlinks=false, pdfborder={0 0 0}}
+
+\titlespacing*{\chapter}{-15pt}{10pt}{15pt}
+\titlespacing*{\section}{0pt}{0pt}{5pt}
+\titlespacing*{\subsection}{0pt}{5pt}{5pt}
+\titleformat{\chapter}[hang]
+{\normalfont\huge\bfseries}{\chaptertitlename\ \thechapter.}{1em}{}
+\renewcommand{\chaptername}{}
+\graphicspath{{Figures/}{Images/}{Images/paper_figures/}}
+
+\begin{document}
+
+% ── Cover Page ────────────────────────────────────────────────────────────────
+\title{
+{\includegraphics[scale=.3]{logotu.jpg}}\\
+\uppercase\large{
+    {Tribhuvan University}\\
+    {Institute of Engineering}\\
+    {Pulchowk Campus}\\
+    \vspace{.3cm}
+    {A \\Project Report\\On\\Detecting Network Anomalies in Named Data\\ Networking
+    Through Isolation Forest-Based Behavioral Analysis}\\
+    \vspace{.3cm}
+    {\textbf{Submitted By:}\\
+     Ankit Pokhrel (PUL079BCT016)\\
+     Asmit Phuyal (PUL079BCT024)\\
+     Darshan Kumar Paudyal (PUL079BCT036)}\\
+    \vspace{.3cm}
+    {\textbf{Submitted To:}\\
+     Department of Electronics \& Computer Engineering}\\
+    }
+}
+\date{May, 2026}
+\maketitle
+
+% ── Front Matter ──────────────────────────────────────────────────────────────
+\pagenumbering{roman}
+\setcounter{page}{2}
+
+
+% ── Page of Approval ──────────────────────────────────────────────────────────
+\chapter*{Page of Approval}
+\addcontentsline{toc}{chapter}{\numberline{}Page of Approval}
+\vspace{1.5cm}
+\begin{center}
+\uppercase{
+Tribhuvan University\\
+Institute of Engineering\\
+Pulchowk Campus\\
+Department of Electronics and Computer Engineering
+}
+\end{center}
+\vspace{.5cm}
+The undersigned certifies that they have read and recommended to the Institute of Engineering for acceptance of a project report entitled \textbf{``Detecting Network Anomalies in Named Data Networking Through Isolation Forest-Based Behavioral Analysis''} submitted by \textbf{Ankit Pokhrel}, \textbf{Asmit Phuyal}, and \textbf{Darshan Kumar Paudyal} in partial fulfillment of the requirements for the Bachelor's degree in Electronics \& Computer Engineering.\\
+
+\vspace{1cm}
+\begin{minipage}{.5\textwidth}
+    \raggedright
+    .............................\\
+    Supervisor\\
+    \textbf{Asst. Prof. Dr. Babu R. Dawadi}\\
+    Department of Electronics and Computer Engineering,\\
+    Pulchowk Campus, IOE, TU.\\
+\end{minipage}%
+\begin{minipage}{0.5\textwidth}
+    \raggedleft
+    .............................\\
+    External Examiner\\
+    \textbf{Assoc. Prof. Dr. Dibakar Raj Pant}\\
+    Department of Electronics and Computer Engineering,\\
+    Pulchowk Campus, IOE, TU.\\
+\end{minipage}\\
+\newline
+\newline
+\newline
+
+
+\chapter*{Acknowledgments}
+\addcontentsline{toc}{chapter}{\numberline{}Acknowledgments}
+
+We would like to express our sincere gratitude to \textbf{Asst.\ Prof.\ Dr.\ Babu R.\ Dawadi} for his guidance and support in the selection of this research topic. This project has been selected under the \textbf{Tribhuvan University (TU) research grants} and is being principally investigated by him. His supervision and direction were essential in shaping the scope and relevance of this work.\\
+We would also like to thank the IC Chair, Asst.\ Prof.\ Bikal Adhikari, and Asst.\ Prof.\ Anila Kansakar for their guidance during the proposal preparation process.\\
+We are grateful to the Institute of Engineering, Tribhuvan University, and the Department of Electronics and Computer Engineering, Pulchowk Campus, for providing the academic framework and support required for this project.\\
+Finally, we acknowledge the support and encouragement of our family and friends throughout this work.\\
+\\
+Sincerely,\\
+Ankit Pokhrel (PUL079BCT016)\\
+Asmit Phuyal (PUL079BCT024)\\
+Darshan Kumar Paudyal (PUL079BCT036)\\
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{\numberline{}Abstract}
+
+Named Data Networking (NDN) is an emerging future Internet architecture that replaces host-centric communication with content-centric named data retrieval. While in-network caching and stateful forwarding improve content delivery, they expose NDN routers to attack vectors, including Interest Flooding Attacks (IFA) and Cache Pollution (CP), that conventional threshold-based detection methods fail to identify reliably.
+
+This report presents a single unsupervised Isolation Forest detector for behavioral anomaly detection in NDN, evaluated on two complementary platforms with the same detector and the same three topologies (tree, dumbbell, and DFN mesh). On the \textbf{miniNDN} emulation platform, which runs the real NDN Forwarding Daemon (NFD), ten behavioral features per node are derived from NFD counters and a global StandardScaler and IsolationForest pipeline is trained exclusively on clean normal traffic. On the \textbf{ndnSIM} simulation platform (ns-3), the same detector is applied to nine face-level tracer features, and an attacker-rate sweep of 297 runs is used to measure each attack's detection floor. Raw scores are mapped to a normalized 0--100 scale with a strict (30\,\%) and an operational (50\,\%) alert threshold, and a real-time dashboard demonstrates live per-node scoring.
+
+The emulation results show that IFA is not a point attack: the global model detects the attacker node at 91.2\,\%, 98.7\,\%, and 96.8\,\% at the operational threshold across the three topologies (false-positive rate below 4.3\,\% on clean traffic), and the anomaly score forms a spatial fingerprint along the attack's forwarding path, with backbone routers flagged at 90--99\,\% and the on-path producer p1 at up to 90.5\,\%. In the hierarchical tree topology the flood degrades every branch, elevating even benign consumers to 51--58\,\%. Kolmogorov--Smirnov tests confirm that satisfaction ratio, cache-hit ratio, and NACK rate are the discriminating features ($D>0.9$, $p<10^{-200}$), while PIT-based features are non-discriminating at the 3-second polling interval ($D<0.1$), correcting the textbook expectation of PIT explosion. Cache Pollution leaves no usable signature in the emulation feature set, motivating the simulation track. In ndnSIM, the same detector isolates both attacks at high rate (100\,\% attacker detection, about 1-second latency), and the rate sweep against sustained background traffic yields two detection floors an order of magnitude apart: CP, a purely volumetric attack, crosses 90\,\% detection near 44\,Hz, whereas IFA, whose timeout and NACK signature is qualitative, holds detection down to about 1.8\,Hz, at a realistic 1--2\,\% false-positive rate. The floors are topology-invariant, establishing that detectability is governed by what each attack does rather than by the network structure.
+
+\tableofcontents
+\addcontentsline{toc}{chapter}{\numberline{}Contents}
+
+% ── Abbreviations ─────────────────────────────────────────────────────────────
+\chapter*{List of Abbreviations}
+\addcontentsline{toc}{chapter}{\numberline{}List of Abbreviations}
+
+\begin{tabular}{cl}
+\textbf{CBR}   & Constant Bit Rate \\
+\textbf{CP}    & Cache Pollution \\
+\textbf{CS}    & Content Store \\
+\textbf{CSV}   & Comma-Separated Values \\
+\textbf{DDoS}  & Distributed Denial of Service \\
+\textbf{DFN}   & Deutsches Forschungsnetz \\
+\textbf{EDA}   & Exploratory Data Analysis \\
+\textbf{FIB}   & Forwarding Information Base \\
+\textbf{FN}    & False Negative \\
+\textbf{FP}    & False Positive \\
+\textbf{FPR}   & False Positive Rate \\
+\textbf{IF}    & Isolation Forest \\
+\textbf{IFA}   & Interest Flooding Attack \\
+\textbf{IP}    & Internet Protocol \\
+\textbf{IQR}   & Inter-Quartile Range \\
+\textbf{KDE}   & Kernel Density Estimation \\
+\textbf{KS}    & Kolmogorov--Smirnov \\
+\textbf{ML}    & Machine Learning \\
+\textbf{NACK}  & Negative Acknowledgment \\
+\textbf{NDN}   & Named Data Networking \\
+\textbf{NFD}   & NDN Forwarding Daemon \\
+\textbf{NLSR}  & Named-data Link State Routing \\
+\textbf{PIT}   & Pending Interest Table \\
+\textbf{SD}    & Standard Deviation \\
+\textbf{TCP}   & Transmission Control Protocol \\
+\textbf{TN}    & True Negative \\
+\textbf{TP}    & True Positive \\
+\end{tabular}
+
+% ── Body ──────────────────────────────────────────────────────────────────────
+\pagenumbering{arabic}
+
+% =============================================================================
+\chapter{Introduction}
+% =============================================================================
+
+The rapid growth of Internet usage has shifted communication from host-centric interactions to content-driven services such as video streaming, social media, and cloud computing. The traditional TCP/IP architecture, designed for host-to-host communication, is inefficient for content retrieval, producing higher latency, redundant data transfers, and poor scalability under content-centric workloads. \textbf{Named Data Networking (NDN)} addresses these limitations by identifying data by name rather than by network address. NDN routers cache content in-network, enabling faster retrieval and reduced producer load. However, this architectural shift introduces security vulnerabilities with no direct TCP/IP equivalent.
+
+\section{Background}
+
+NDN communication uses two packet types: Interest packets, which request named content, and Data packets, which carry the content back along the reverse path. Every router maintains three data structures: the Content Store (CS) for in-network caching, the Pending Interest Table (PIT) for tracking outstanding requests, and the Forwarding Information Base (FIB) for name-based routing. The stateful nature of the PIT and the reliance on cached content create attack surfaces that traditional IP-based security mechanisms cannot address.
+
+\subsection{Security Challenges}
+
+Two primary attack classes motivate this research.
+
+\begin{itemize}
+    \item \textbf{Interest Flooding Attack (IFA):} An adversary sends a sustained stream of Interests for non-existent or unsatisfiable content, exhausting PIT state and degrading router performance for legitimate users. Its behavioral signature, elevated NACK rates and a collapsing satisfaction ratio, is only reliably detectable through joint multi-feature analysis, because the attacker mimics legitimate traffic in most individual features. As this work shows, IFA does not stay confined to the attacker: it propagates along the forwarding path, degrading backbone routers and producers, and in hierarchical networks it becomes a network-wide quality-of-service event.
+
+    \item \textbf{Cache Pollution (CP):} An adversary repeatedly requests unpopular or random content under a near-uniform name distribution, evicting useful cached data and forcing subsequent legitimate requests to traverse to the producer. Because the requested content is still served, the satisfaction ratio stays high, making CP invisible to satisfaction-threshold detectors. CP is a fundamentally volumetric attack: its only statistical footprint is added request volume, which makes its detectability a function of how far the attacker's rate rises above the legitimate baseline.
+\end{itemize}
+
+\section{Problem Statement}
+
+Existing NDN security mechanisms exhibit four key limitations that this work addresses.
+
+\begin{enumerate}
+    \item \textbf{Threshold-Based Detection Failures:} Static rules generate high false-positive rates under legitimate traffic surges and miss attacks that deliberately remain below every individual threshold simultaneously.
+    \item \textbf{Subtle Attack Evasion:} Low-rate IFA attacks mimic legitimate traffic in most behavioral features. The attack signature only emerges jointly across NACK rate, satisfaction ratio, and related dimensions.
+    \item \textbf{Absence of Multi-Metric Behavioral Analysis:} Most prior work monitors individual counters in isolation rather than capturing the joint behavioral state of PIT, CS, and traffic rates simultaneously.
+    \item \textbf{Dependence on Labeled Attack Data:} Supervised approaches require labeled attack datasets that are difficult to obtain for NDN's evolving threat landscape.
+\end{enumerate}
+
+A further gap, addressed here, is that prior work reports detection at a single high attack rate and does not characterise the \emph{detection floor}: the attacker rate below which an attack can no longer be distinguished from legitimate traffic. The floor, not the peak, determines how stealthy an attacker can be.
+
+\section{Objectives}
+
+The primary goal is to develop an intelligent, unsupervised anomaly detection system for NDN that identifies both high-rate and subtle attacks without prior knowledge of attack patterns. Specific objectives are:
+
+\begin{itemize}
+    \item To design a lightweight behavioral profiling framework for NDN by deriving discriminative network features from NFD and simulator counters that capture forwarding, caching, and packet satisfaction dynamics.
+
+    \item To develop an unsupervised anomaly detection system using an Isolation Forest pipeline trained solely on normal traffic for accurate detection of Interest Flooding and Cache Pollution attacks.
+
+    \item To validate the proposed approach across multiple network topologies and across two independent platforms (miniNDN emulation and ndnSIM simulation) through per-node analysis, interpretable anomaly attribution, an attacker-rate sweep that measures each attack's detection floor, and real-time monitoring.
+\end{itemize}
+
+\section{Scope and Limitations}
+
+This work is scoped to emulation and simulation experiments, as NDN is not yet widely deployed in operational infrastructure. The Isolation Forest model is trained as a single global model across all node types and topologies. Real-time deployment is demonstrated through stream replay of pre-recorded NFD log data on the emulation platform. Cache Pollution is not detectable from behavioral traffic statistics in the miniNDN emulation setup (the baseline cache-hit ratio is already near zero, so there is nothing to degrade); it is therefore evaluated on the ndnSIM platform, where legitimate caching is active and CP produces a measurable volumetric signature.
+
+% =============================================================================
+\chapter{Literature Review}
+% =============================================================================
+
+\section{NDN Security and Attack Detection}
+
+Named Data Networking introduces a content-centric architecture where data is identified by name rather than host address \cite{zhang2010ndnproject}. While in-network caching and stateful forwarding improve performance, they introduce vulnerabilities related to PIT exhaustion and cache misuse. Shah et al.\ survey major NDN threats, including replay attacks, Man-in-the-Middle attacks, and content poisoning, and emphasize that cache-based exploitation remains a principal concern \cite{shah2023security}.
+
+Interest Flooding and Cache Pollution are among the most critical threats to NDN routers. Xu et al.\ propose a sketch-based lightweight DDoS detection mechanism that identifies malicious name prefixes with reduced computational overhead \cite{xu_persistent_detection}. Rule-based defenses and static thresholds, however, fail against adaptive or low-rate attacks that intentionally mimic legitimate traffic by keeping each individual metric within normal bounds.
+
+\section{Machine Learning for Intrusion Detection}
+
+Machine learning has been increasingly applied to detect complex network attacks. Liu et al.\ employ an improved XGBoost classifier to detect hybrid DDoS attacks combining Interest Flooding and Cache Pollution \cite{liu2025xgboost}. While their supervised model achieves high accuracy, it depends on labeled datasets and generalizes poorly to previously unseen attack variants.
+
+Unsupervised methods offer a complementary approach when labeled data are unavailable. Isolation Forest, introduced by Liu et al., isolates anomalies using random recursive partitioning; anomalous points require fewer splits to isolate than normal instances \cite{liu2008isolation}. The algorithm is computationally efficient, effective in high-dimensional spaces, and requires no prior knowledge of attack patterns.
+
+\section{Isolation Forest in NDN Security}
+
+Xing et al.\ propose IFDM, which applies Isolation Forest to NDN environments using four features derived from Interest rates, Data rates, PIT entries, and expired PIT entries \cite{xing2021isolation}. Their results demonstrate improved detection accuracy and faster response time compared to statistical threshold methods, validating the applicability of unsupervised anomaly detection in NDN.
+
+\section{Research Gaps}
+
+Despite meaningful progress, several gaps remain. First, prior NDN anomaly detection work relies heavily on PIT-based features, which this work shows are non-discriminating at practical polling intervals. Second, most systems are evaluated against a single high-rate attack and do not measure the detection floor, the rate at which an attack becomes indistinguishable from normal traffic. Third, few studies assess per-node detection behavior or propagation patterns across nodes. Fourth, most systems are validated on a single platform, either simulation or emulation, without cross-platform agreement, and most produce binary anomaly labels without identifying which behavioral patterns contributed to the detection.
+
+This research addresses these gaps: it uses a ten-dimensional behavioral feature set built from standard counters, evaluates a full attacker-rate sweep to locate each attack's detection floor, performs per-node analysis revealing attack propagation fingerprints, validates the same detector on both emulation and simulation platforms, and provides per-alert feature-level explanations.
+
+\section{Theoretical Background}
+
+\subsection{NDN Architecture}
+
+NDN replaces IP addresses with hierarchical content names. Three forwarding data structures govern router behavior: the PIT, which tracks outstanding Interests for reverse-path Data forwarding; the CS, which caches recently retrieved Data packets; and the FIB, which maps name prefixes to outgoing interfaces.
+
+\subsection{Isolation Forest}
+
+Isolation Forest detects anomalies by building an ensemble of isolation trees through random feature selection and random split-value assignment. Each tree recursively partitions the data space until every point is isolated. The anomaly score for instance $x$ in a dataset of $n$ samples is:
+
+\begin{equation}
+s(x, n) = 2^{-\dfrac{E[h(x)]}{c(n)}}
+\end{equation}
+
+\noindent where $E[h(x)]$ is the mean path length across all trees, and $c(n)$ is the expected path length for an unsuccessful binary search tree search:
+
+\begin{equation}
+c(n) = 2H(n-1) - \frac{2(n-1)}{n}, \qquad H(i) = \ln(i) + 0.5772
+\end{equation}
+
+A score near 1 indicates a strong anomaly; a score near 0.5 is characteristic of normal instances. In the scikit-learn implementation, \textit{decision\_function} returns a shifted signed score where more negative values denote greater anomaly strength.
+
+\subsection{Evaluation Metrics}
+
+Detection performance on labeled test data is quantified using detection rate (recall) and false-positive rate:
+
+\begin{equation}
+\text{Detection Rate} = \frac{TP}{TP + FN}, \qquad
+\text{FPR} = \frac{FP}{FP + TN}
+\end{equation}
+
+Statistical separability of attack versus normal score distributions is assessed using the two-sample Kolmogorov--Smirnov test, which measures the maximum absolute difference between empirical cumulative distribution functions.
+
+% =============================================================================
+\chapter{Methodology}
+% =============================================================================
+
+The system is developed through five sequential phases: data collection, feature engineering, model training, evaluation, and real-time inference. The same Isolation Forest detector is used on both platforms; only the counter source and the resulting feature set differ (ten NFD-derived features on miniNDN, nine face-level tracer features on ndnSIM).
+
+\section{Phase 1: Data Collection}
+
+\subsection{Metrics Source}
+
+On the emulation platform, two lightweight NFD commands are issued per node at each collection interval: \textit{nfdc status}, which provides global traffic counters (\textit{nInInterests}, \textit{nOutInterests}, \textit{nInData}, \textit{nOutData}, \textit{nInNacks}, \textit{nOutNacks}, \textit{nPitEntries}, \textit{nSatisfiedInterests}, \textit{nUnsatisfiedInterests}), and \textit{nfdc cs info}, which provides cache statistics (\textit{nHits}, \textit{nMisses}, \textit{nCsEntries}). The full \textit{nfdc status report} is deliberately avoided, as it includes per-Face, FIB, and RIB tables that are irrelevant to the feature set and too verbose for short collection intervals.
+
+\subsection{Collection Architecture}
+
+Each NDN node runs a metrics producer daemon that registers the prefix \textit{/ndn/\{node\}/metrics}, executes the two commands on receiving a collector Interest, and returns the parsed result as a Data packet with a short FreshnessPeriod. A centralised collector issues periodic Interests to all nodes at a fixed interval, receives responses, and writes timestamped records to JSONL/CSV with a ground-truth label column for evaluation. Cumulative NFD counters are differenced between consecutive intervals to produce per-second rates.
+
+\subsection{Dataset Composition}
+
+The emulation datasets target diversity across all node types and three topologies to provide a broad representation of legitimate router behavior. Table~\ref{tab:datasets} lists the collected datasets. A critical data-quality control is applied before training: intervals in which a node emitted no traffic (idle periods where the satisfaction denominator is zero) are removed, because an idle interval otherwise records an artificial satisfaction ratio of zero and teaches the model that ``failure equals normal.'' Training on unfiltered data that contained roughly one fifth such idle intervals collapsed attacker detection to near zero; the clean per-topology data used here reproduces the 89--98\,\% detection reported in Chapter~6.
+
+\begin{table}[H]
+\centering
+\caption{Collected miniNDN Datasets (3-second polling)}
+\label{tab:datasets}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Dataset}            & \textbf{Topology} & \textbf{Type}      & \textbf{Intervals} \\
+\midrule
+tree\_normal\_1 + tree\_normal\_2 & Tree        & Normal (training)  & $\sim$18{,}900 combined \\
+tree\_ifa                   & Tree              & IFA attack         & 3{,}532 \\
+dumbbell\_normal            & Dumbbell          & Normal (training)  & 5{,}370 \\
+dumbbell\_ifa               & Dumbbell          & IFA attack         & 5{,}380 \\
+dfn\_normal                 & DFN mesh          & Normal (training)  & $\sim$7{,}200 \\
+dfn\_ifa                    & DFN mesh          & IFA attack         & 7{,}218 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The simulation datasets are generated by an attacker-rate sweep in ndnSIM and are described in Section~\ref{sec:ndnsim-setup}; they cover both IFA and CP across a range of attacker rates and multiple seeds.
+
+\section{Phase 2: Feature Engineering}
+\label{sec:features}
+
+On the emulation platform, ten behavioral features are computed per node per collection interval from raw NFD counter deltas and absolute state values, as defined in Table~\ref{tab:features}. All ratio features are set to zero when both numerator and denominator are zero to avoid undefined behavior during inactive intervals.
+
+\begin{table}[H]
+\centering
+\caption{Ten Behavioral Features (miniNDN)}
+\label{tab:features}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Feature}              & \textbf{Definition}                                                       & \textbf{Category} \\
+\midrule
+\textit{pit\_size}            & $\textit{nPitEntries}$ (absolute)                                         & State \\
+\textit{pit\_growth\_rate}    & $\Delta\textit{nPitEntries} / \Delta t$                                   & Rate  \\
+\textit{cs\_size}             & $\textit{nCsEntries}$ (absolute)                                          & State \\
+\textit{cache\_hit\_ratio}    & $\textit{nHits} / (\textit{nHits} + \textit{nMisses})$                    & Ratio \\
+\textit{satisfaction\_ratio}  & $\textit{nSat} / (\textit{nSat} + \textit{nUnsat})$                       & Ratio \\
+\textit{unsatisfied\_ratio}   & $\textit{nUnsat} / (\textit{nSat} + \textit{nUnsat})$                     & Ratio \\
+\textit{in\_interests\_rate}  & $\Delta\textit{nInInterests} / \Delta t$                                  & Rate  \\
+\textit{out\_interests\_rate} & $\Delta\textit{nOutInterests} / \Delta t$                                 & Rate  \\
+\textit{in\_data\_rate}       & $\Delta\textit{nInData} / \Delta t$                                       & Rate  \\
+\textit{nack\_rate}           & $\Delta(\textit{nInNacks} + \textit{nOutNacks}) / \Delta t$               & Rate  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+On the simulation platform, nine face-level features are derived from the ndnSIM tracers: three interest/data rates (\textit{InInterests}, \textit{OutInterests}, \textit{InData}) and six ratios (\textit{cache\_hit\_ratio}, \textit{satisfaction\_ratio}, \textit{timeout\_ratio}, \textit{nack\_ratio}, \textit{interest\_amp} $=\Delta$Out$/\Delta$In, and \textit{data\_ratio} $=\Delta$InData$/\Delta$In). No PIT-based feature is used on either platform, consistent with the finding (Section~\ref{sec:ks}) that PIT counters are non-discriminating at practical polling intervals.
+
+\subsection{Feature Clipping}
+
+Rate features are clipped to the [1st percentile, 99th percentile] range computed on the normal training data to prevent outlier values from distorting the StandardScaler fit. For features whose 99th percentile equals their 1st percentile on normal data (specifically \textit{nack\_rate} and \textit{pit\_growth\_rate}, which are zero throughout normal traffic), clipping is skipped entirely so that the full dynamic range of these features remains available during inference on attack data. Features that are identically zero under normal traffic but non-zero under attack must never be clipped to zero, or their attack-time signal is destroyed before it reaches the model.
+
+\subsection{Robustness to Load}
+
+Absolute rate features are load-dependent: a normal run collected at roughly twice the request rate can be false-flagged by a model trained at a lower load. A ratio-only variant of the feature set (satisfaction ratio, cache-hit ratio, NACK rate, data-to-interest ratio, and forwarding ratio) is therefore evaluated as a load-invariant alternative; it sustains affected-node IFA detection across differing traffic loads at a low false-positive rate. Real-time scorers additionally gate out idle intervals, in which a zero forwarding ratio would otherwise appear anomalous despite the absence of any attack.
+
+\section{Phase 3: Model Training}
+
+A two-step scikit-learn Pipeline comprising a StandardScaler followed by an IsolationForest is fitted exclusively on the normal traffic dataset. StandardScaler normalises each feature to zero mean and unit variance, ensuring that features of different magnitudes contribute equally to the anomaly score. IsolationForest is configured with 200 isolation trees, a contamination parameter of 0.01, and a fixed random seed for reproducibility. A single global model is trained on the combined clean normal data across all three topologies.
+
+\subsection{Auto-Threshold Calibration}
+
+Rather than applying a fixed empirical threshold, the anomaly decision boundary $\theta$ is derived from the training score distribution. Specifically, $\theta$ is set to the value such that approximately 1\,\% of normal training samples are classified as anomalous, consistent with the configured contamination parameter, which places $\theta$ at the raw \textit{decision\_function} value of $0.0$ (positive scores are normal, negative scores anomalous). The fitted pipeline, threshold $\theta$, training score range $[s_{\min}, s_{\max}]$, and feature column ordering are serialised to disk.
+
+\subsection{Score Normalisation}
+
+Raw \textit{decision\_function} scores are mapped to a human-readable 0--100 scale for dashboard display and multi-level alerting. The mapping places $\theta$ at 30\,\%, $s_{\max}$ at 100\,\%, and $s_{\min}$ at 0\,\%:
+
+\begin{equation}
+\hat{s} =
+\begin{cases}
+30 + \dfrac{s - \theta}{s_{\max} - \theta} \times 70 & \text{if } s \ge \theta \\[8pt]
+\dfrac{30 \times (s - s_{\min})}{\theta - s_{\min}} & \text{if } s < \theta
+\end{cases}
+\end{equation}
+
+\noindent clipped to $[0, 100]$. Two operational thresholds are defined on this scale:
+
+\begin{itemize}
+    \item \textbf{Strict threshold (30\,\%)}: corresponds to the raw auto-calibrated decision boundary $\theta = 0.0$; a normalized score below 30\,\% indicates a confident anomaly.
+    \item \textbf{Operational threshold (50\,\%)}: a lower-sensitivity yellow alert level that captures nodes whose raw scores lie slightly above $\theta$ but whose normalized score nonetheless signals a behavioral deviation. This threshold is particularly important for IFA detection, where attack signatures produce only moderate raw score depression.
+\end{itemize}
+
+\section{Phase 4: Evaluation}
+
+Each test dataset is scored using the saved pipeline. Per-node detection rates are computed at both the 30\,\% and 50\,\% normalized thresholds. Statistical separation of score distributions is assessed with the two-sample Kolmogorov--Smirnov test. On the simulation platform, detection is additionally computed as a function of attacker rate to locate the detection floor.
+
+\subsection{Feature Importance}
+
+Feature importance is estimated via permutation sensitivity. For each feature $j$, importance is the mean absolute change in anomaly scores when that feature's values are randomly permuted:
+
+\begin{equation}
+I_j = \mathbb{E}\!\left[\bigl|s(X) - s(X^{(j)})\bigr|\right]
+\end{equation}
+
+\noindent where $X^{(j)}$ denotes the feature matrix with column $j$ shuffled. Importance is computed both globally and per attack type to capture which features drive detection under each attack.
+
+\section{Phase 5: Real-Time Inference}
+
+The inference engine loads the serialised pipeline and threshold, maintains a per-node state buffer storing the most recent counter snapshot, and processes each incoming sample by computing the features from the current and previous counter states. The normalized anomaly score $\hat{s}$ is computed for every sample. When $\hat{s}$ falls below the selected operational threshold, an alert is generated listing the node identifier, timestamp, normalized score, and the top three deviating features ranked by z-score:
+
+\begin{equation}
+z_j = \frac{x_j - \mu_j}{\sigma_j}
+\end{equation}
+
+\noindent where $\mu_j$ and $\sigma_j$ are the mean and standard deviation of feature $j$ from the fitted StandardScaler.
+
+% =============================================================================
+\chapter{Experimental Setup}
+% =============================================================================
+
+The detector is evaluated on two platforms. The miniNDN emulation platform runs the real NFD stack and is used for the primary IFA study and the real-time system; the ndnSIM simulation platform provides controlled ground truth, covers both IFA and CP, and supports the attacker-rate sweep used to measure detection floors. Both platforms use the same three topologies, illustrated in Figure~\ref{fig:topologies}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=1\textwidth]{topologies.png}
+    \caption{Three experimental topologies used on both platforms. Tree (left): hierarchical structure with a single root router. Dumbbell (centre): two stub networks connected through a shared bottleneck core. DFN (right): irregular topology derived from the German Research Network graph. Producer nodes are shown in green, consumer nodes in blue, and transit routers in grey.}
+    \label{fig:topologies}
+\end{figure}
+
+The \textbf{Tree topology} models campus or enterprise hierarchical networks; traffic flows predominantly from consumer leaf nodes through intermediate backbone routers to producer leaf nodes. The \textbf{Dumbbell topology} models wide-area configurations with a bandwidth-constrained bottleneck, stressing PIT state at core routers during traffic surges. The \textbf{DFN topology}, derived from the Deutsches Forschungsnetz graph, has irregular node degree and multiple redundant paths, testing generalisation to real-world network graph properties. All topologies contain nine to twelve nodes.
+
+\section{miniNDN Emulation Environment}
+
+All emulation experiments are conducted in \textbf{miniNDN}, an NDN network emulator built on Mininet that executes the actual NFD stack inside isolated Linux network namespaces. Unlike simulation frameworks, miniNDN runs real NFD instances, enabling direct use of \textit{nfdc} commands and producing counter values that reflect real forwarding behavior, including OS scheduling, NFD buffering, and timing jitter. The host environment is Ubuntu 22.04 LTS. NFD instances use a uniform Content Store capacity, and NLSR manages name-based routing between nodes.
+
+\subsection{Traffic Generation}
+Legitimate traffic is generated with consumer request rates varying between 40 and 80 Interests per second with natural Gaussian variance. Content names follow a Zipf distribution, producing realistic request patterns. Each simulation run lasts several minutes, and multiple runs are combined across all three topologies to form the training and evaluation datasets of Table~\ref{tab:datasets}. Counters are polled every 3 seconds.
+
+\subsection{Attack Traffic}
+The emulation study evaluates the \textbf{Interest Flooding Attack}. A single consumer node (c1) floods the network with Interests for non-existent content names. Because no producer can satisfy them, the Interests expire in the PIT, routers emit NACKs, and the attacker's satisfaction ratio collapses toward zero. The attacker's traffic rates remain within the envelope of legitimate consumer traffic, so the attack is only jointly detectable across the satisfaction, NACK, and cache-hit dimensions. Cache Pollution is not evaluated in emulation because, in this setup, the baseline cache-hit ratio is already near zero, leaving CP no cached content to degrade and therefore no behavioral footprint (Section~\ref{sec:cp-negative}).
+
+\section{ndnSIM Simulation Environment}
+\label{sec:ndnsim-setup}
+
+The simulation experiments use \textbf{ndnSIM 2.x} on ns-3.35 in a Docker/Ubuntu 20.04 container. ndnSIM runs a patched NFD forwarding core, so face-level counters closely mirror real forwarding while providing deterministic, per-second ground-truth labels. Two source-level fixes to the patched tree were required: the Content Store tracer needed a full common-header inclusion to connect to the cache hit/miss signals, and the forwarding strategy needed an explicit success return on its no-PIT-token path to avoid a crash on the first cache hit. Each run emits four tracer files at a 1-second interval (an L3 rate tracer, a Content Store tracer, an application-delay tracer, and a per-second ground-truth label).
+
+\subsection{Traffic Scenarios}
+Every scenario runs for 600 seconds; attacks inject at $t = 300$\,s, giving a balanced 300\,s normal and 300\,s attack split, and the detector is fit on the first 200\,s of normal traffic. All three scenario types share an identical legitimate background so that the only difference between a normal and an attack run is the attack itself. Each consumer runs a Zipf-Mandelbrot request process at 10 interests/s over a catalog of $N = 300$ distinct names. The catalog size is deliberate: a smaller catalog is exhausted within about 30\,s, after which the consumers fall silent and the background dies, so a model trained on such a run learns ``normal equals idle network'' and later measures detection against silence. At $N = 300$ the consumers emit for the full 600\,s while the cache stays useful, so detection is measured against live traffic (Section~\ref{sec:ndnsim-validity}).
+
+\paragraph{IFA.} At $t = 300$\,s the attacker launches four concurrent constant-bit-rate streams toward a \textit{/evil} namespace served by a co-located black-hole producer that registers the prefix but never returns Data, so each interest stays pending until it times out. This produces genuine PIT pressure, timeouts, and NACKs. The four streams follow a fixed $40\!:\!30\!:\!20\!:\!10$ rate ratio scaled to the chosen total rate.
+
+\paragraph{CP.} At $t = 300$\,s two attacker consumers each request 50 distinct junk names under \textit{/ndn/junk/}. Because the junk falls under the served namespace, producers answer it, so the junk Data enters router Content Stores through ordinary caching and evicts popular content, raising the legitimate cache-miss rate. The name diversity is fixed across the sweep; only the per-name frequency is scaled to set the attacker's total rate.
+
+\subsection{Attacker-Rate Sweep}
+\label{sec:sweep}
+
+To locate each attack's detection floor, the attacker rate is swept and replicated over seeds (Table~\ref{tab:sweep-matrix}). Because the two floors turn out to be an order of magnitude apart, each attack is sampled densely where its own floor lies. Every configuration runs on all three topologies, giving \textbf{297 runs} (15 normal, 156 IFA, 126 CP), each emitting the four tracer files.
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM attacker-rate sweep. Floor-region rates use five seeds; the two highest rates are single-seed anchors. Rates are per attacker (CP has two attackers).}
+\label{tab:sweep-matrix}
+\begin{tabular}{lll}
+\toprule
+\textbf{Scenario} & \textbf{Attacker rates (interests/s)} & \textbf{Seeds} \\
+\midrule
+Normal & (no attack) & 1--5 \\
+\midrule
+\multirow{2}{*}{IFA}
+  & 1, 2, 4, 6, 8, 10, 12, 15, 20, 30 & 1--5 \\
+  & 50, 100 & 1 (anchor) \\
+\midrule
+\multirow{2}{*}{CP}
+  & 10, 12, 15, 20, 30, 35, 40, 45 & 1--5 \\
+  & 50, 100 & 1 (anchor) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Software Dependencies}
+
+\begin{table}[H]
+\centering
+\caption{Software Environment}
+\label{tab:software}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component}        & \textbf{Tool / Library}   & \textbf{Version}  \\
+\midrule
+NDN emulation             & miniNDN                   & 0.4.0             \\
+NDN simulation            & ndnSIM on ns-3            & 2.x / ns-3.35     \\
+NDN forwarding daemon     & NFD                       & 22.12             \\
+Name-based routing        & NLSR                      & 22.12             \\
+Machine learning          & scikit-learn              & 1.4+              \\
+Data processing           & pandas, numpy             & latest stable     \\
+Visualisation             & matplotlib, seaborn       & latest stable     \\
+Model persistence         & joblib                    & latest stable     \\
+Runtime                   & Python                    & 3.10+             \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\chapter{System Design}
+% =============================================================================
+
+The real-time detection system, demonstrated on the emulation platform, is organised into five loosely coupled layers, as illustrated in Figure~\ref{fig:architecture}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{minor_arch.png}
+    \caption{System architecture. Data flows upward from the NDN network layer through metrics collection, feature engineering, and anomaly detection to the alert layer.}
+    \label{fig:architecture}
+\end{figure}
+
+\section{NDN Network Layer}
+
+Multiple NDN nodes execute NFD within miniNDN network namespaces. Each node maintains PIT, CS, and FIB state, processes Interest and Data packets per NDN forwarding semantics, and accumulates traffic counters across all packet events. Attack traffic is injected from one or more designated attacker nodes.
+
+\section{Metrics Collection Layer}
+
+Metrics producers run as background daemon processes on each NDN node. They register the prefix \textit{/ndn/\{node\}/metrics}, respond to collector Interests with current NFD statistics, and set a short FreshnessPeriod to prevent stale data caching. The centralised metrics collector polls all nodes at a fixed interval, receives Data packets, parses counter fields, and writes timestamped records. It also maintains the previous-interval counter snapshot per node, which is required to compute all rate-based features.
+
+\section{Feature Engineering Module}
+
+This module reads the current and previous counter records for each node, computes the ten behavioral features defined in Table~\ref{tab:features}, applies the trained clip bounds where applicable, and produces a feature vector ready for normalisation. It handles edge cases including counter resets, first-interval bootstrapping, zero-denominator ratio computations, and idle-interval gating. Rate features are clipped to their training-time percentile bounds, with the exception of features whose normal-traffic range collapses to zero (specifically \textit{nack\_rate} and \textit{pit\_growth\_rate}), for which clipping is bypassed to preserve attack-time signal.
+
+\section{Anomaly Detection Module}
+
+In \textbf{training mode}, this module fits the StandardScaler and IsolationForest pipeline on the normal dataset and computes the auto-threshold from the resulting score distribution. In \textbf{inference mode}, it loads the serialised pipeline and threshold, scores each incoming feature vector, maps the raw score to the 0--100 normalized scale, and passes samples below the selected threshold to the alert layer. Three artefacts are persisted after training: the fitted pipeline, the threshold metadata, and the feature clipping bounds.
+
+\section{Alert and Explanation System}
+
+For each detected anomaly, this layer computes per-feature z-scores using the scaler's stored statistics, ranks features by absolute z-score, and emits a structured alert containing the node identifier, timestamp, normalized anomaly score, and the top three contributing features with their z-score magnitudes. All detections are logged persistently.
+
+\section{Sequence of Real-Time Detection}
+
+Figure~\ref{fig:sequence} illustrates the message sequence for a single detection cycle, from NFD counter generation through feature computation and scoring to alert emission.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.98\textwidth]{minor_seq.png}
+    \caption{Sequence diagram for one real-time detection cycle.}
+    \label{fig:sequence}
+\end{figure}
+
+\section{Deployment Configurations}
+
+The \textbf{centralised deployment} used in this study operates a single collector that gathers metrics from all nodes and performs all inference centrally. It is appropriate for laboratory-scale experiments and simplifies debugging. The \textbf{distributed deployment}, the intended production path, co-locates a lightweight feature engineering and scoring agent on each NDN node, forwarding only alert-level events to a central aggregator. This configuration scales to large topologies, eliminates the single-collector bottleneck, and reduces detection latency.
+
+\section{Real-Time Monitoring Dashboard}
+
+To demonstrate the system in a live network setting, a web-based monitoring dashboard was developed that ingests log files written by the NFD metrics collector in real time and presents per-node behavioral state alongside both rule-based threshold alerts and Isolation Forest anomaly scores.
+
+\subsection{Dashboard Overview}
+
+Figure~\ref{fig:dashboard_overview} shows the main dashboard view. The top bar displays live connection status, the number of monitored nodes, and the timestamp of the most recent update. Individual node tabs, each marked with a warning indicator when an active alert is present, allow the operator to switch between an aggregate view and a per-node view. A row of summary metric cards presents the current aggregate values for anomaly score, interest rate, satisfaction ratio, PIT size, and CS entries at a glance. The primary panel displays the normalized Isolation Forest anomaly score time series for all nodes simultaneously.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{dashboard_overview.png}
+    \caption{Real-time monitoring dashboard, main view. The top row shows live summary metrics including the normalized anomaly score, satisfaction ratio, PIT size, and CS entries. The main chart plots the Isolation Forest normalized score over time for all monitored nodes, with a dashed line at the 50\,\% operational threshold. Node tabs highlighted with a warning symbol indicate nodes with active alerts.}
+    \label{fig:dashboard_overview}
+\end{figure}
+
+\subsection{Per-Node Metric Charts}
+
+Figure~\ref{fig:dashboard_metrics} shows the per-node metric panels. Four time-series graphs are rendered simultaneously, Interest Rate, Satisfaction Ratio, PIT Size, and NACK Rate, with each node plotted as a distinct coloured trace. These panels expose the raw behavioral signals that inform both the rule-based alerts and the Isolation Forest model, and they allow an operator to correlate a model-triggered alert with the underlying metric that caused the deviation.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{dashboard_metrics.png}
+    \caption{Per-node metric panels. Interest rate (top left), satisfaction ratio (top right), PIT size (bottom left), and NACK rate (bottom right) are plotted in real time for all monitored nodes.}
+    \label{fig:dashboard_metrics}
+\end{figure}
+
+\subsection{Alert Mechanism}
+
+The dashboard operates two independent alert layers concurrently. The \textbf{legacy alert layer} evaluates static threshold rules on every incoming log record and raises an alert when any rule is violated. The \textbf{Isolation Forest alert layer} maps each new feature vector to a normalized score and raises a yellow alert at 50\,\% or a red alert at 30\,\%. When either layer fires, the dashboard emits an audible notification and displays a pop-up identifying the affected node, the normalized score, and the timestamp. All alerts from both layers are written to a persistent log for post-hoc analysis.
+
+% =============================================================================
+\chapter{Results and Analysis}
+% =============================================================================
+
+Results are presented in two parts. Part~I covers the miniNDN emulation study of IFA, including the negative result for CP. Part~II covers the ndnSIM simulation study, which evaluates both attacks and measures their detection floors.
+
+\section{Part I: miniNDN Emulation Results (IFA)}
+
+\subsection{Training Baseline and False-Positive Rate}
+
+The global model is trained on the combined clean normal traffic from all three topologies. On held-out normal traffic the false-positive rate is low at both thresholds (Table~\ref{tab:fpr}). Figure~\ref{fig:emu_score_dist} shows that the normal and IFA anomaly-score distributions are cleanly separated in every topology.
+
+\begin{table}[H]
+\centering
+\caption{Normal-traffic false-positive rate, global model (attacker-labelled intervals flagged on clean data).}
+\label{tab:fpr}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{Threshold} & \textbf{Tree} & \textbf{Dumbbell} & \textbf{DFN} \\
+\midrule
+@30\,\% (strict)       & 0.19\,\% & 1.00\,\% & 0.64\,\% \\
+@50\,\% (operational)  & 1.08\,\% & 4.27\,\% & 4.10\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_score_dist.png}
+    \caption{Normal versus IFA normalized anomaly-score distributions for the three topologies (global model). Normal traffic concentrates in the high-score (normal) region while IFA traffic shifts toward the anomalous region, crossing the 30\,\% and 50\,\% thresholds.}
+    \label{fig:emu_score_dist}
+\end{figure}
+
+Figure~\ref{fig:threshold_sensitivity} shows detection rate and false-positive rate as functions of the normalized threshold. IFA detection improves sharply through the 30--50\,\% band, where most attacker windows fall, motivating the operational threshold.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_threshold_sensitivity.png}
+    \caption{Threshold sensitivity (miniNDN). Detection rate (solid) and false-positive rate (dashed) versus the normalized score threshold, with the strict (30\,\%) and operational (50\,\%) operating points marked. IFA detection rises steeply across the 30--50\,\% band.}
+    \label{fig:threshold_sensitivity}
+\end{figure}
+
+\subsection{Normal Traffic Feature Signature}
+
+Figure~\ref{fig:emu_timeseries} shows the mean feature time series for the attacker, a benign consumer, and a router. Under normal traffic every feature is tight and stable; when the attack begins, the attacker's satisfaction ratio collapses and its NACK rate spikes, while the traffic-rate features remain within the normal envelope. This is the joint, multi-feature signature that the Isolation Forest encodes.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_timeseries_tree.png}
+    \caption{Feature time series (Tree topology): attacker c1 versus a benign consumer versus a router. The attacker's satisfaction ratio drops and NACK rate rises during the attack, while its interest rates stay within the normal range, illustrating why single-metric thresholds miss IFA.}
+    \label{fig:emu_timeseries}
+\end{figure}
+
+\subsection{Attacker Detection Across Topologies}
+
+The global model detects the attacker node c1 at high rates in all three structurally distinct topologies without any topology-specific retraining (Table~\ref{tab:attacker_det}). Per-node detection is shown in Figure~\ref{fig:emu_pernode}.
+
+\begin{table}[H]
+\centering
+\caption{Attacker node c1 detection rate, global model.}
+\label{tab:attacker_det}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Topology} & \textbf{Detection @30\,\%} & \textbf{Detection @50\,\%} \\
+\midrule
+Tree     & 89.1\,\% & 91.2\,\% \\
+Dumbbell & 98.5\,\% & 98.7\,\% \\
+DFN      & 96.7\,\% & 96.8\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_tree.png}
+        \caption{Tree}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_dumbbell.png}
+        \caption{Dumbbell}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.32\textwidth}
+        \includegraphics[width=\linewidth]{emu_pernode_dfn.png}
+        \caption{DFN}
+    \end{subfigure}
+    \caption{Per-node IFA detection rate (global model) for the three topologies. The attacker and on-path routers and producers are strongly detected; off-path nodes remain low, except in the Tree topology where the flood reaches every branch.}
+    \label{fig:emu_pernode}
+\end{figure}
+
+\subsection{Spatial Attack Fingerprint: Routers and Producers}
+
+IFA does not stay confined to the attacker. Router detection directly reflects the attack's forwarding path (Table~\ref{tab:spatial}): backbone routers that carry c1's flood toward producers are heavily flagged (90--99\,\%), while routers on unaffected branches remain near baseline (2--22\,\%). The producer p1, which lies on c1's forwarding path in all three topologies, is flagged at 90.5\,\%, 72.4\,\%, and 46.5\,\%, whereas the off-path producer p2 stays near baseline. The anomaly score therefore forms a spatial fingerprint of the attack path without any routing-table access, as visualised in the z-score heatmap of Figure~\ref{fig:emu_zscore} and the score timeline of Figure~\ref{fig:emu_score_timeline}.
+
+\begin{table}[H]
+\centering
+\caption{Spatial propagation of IFA detection (@50\,\%, global model).}
+\label{tab:spatial}
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{Topology} & \textbf{Node group (role)} & \textbf{Detection @50\,\%} \\
+\midrule
+Tree     & r1, r2 (backbone, on-path)      & 90--90.4\,\% \\
+Tree     & r3, r4 (leaf, off-path)         & 18--22\,\% \\
+Tree     & p1 / p2 (on-path / off-path producer) & 90.5\,\% / 30.0\,\% \\
+Dumbbell & r1, r2, r3, bottleneck (on-path) & 98.7\,\% \\
+Dumbbell & r4 (off-path)                    & 2.0\,\% \\
+Dumbbell & p1 / p2                          & 72.4\,\% / 2.2\,\% \\
+DFN      & r1, r2 (core, on-path)           & 97\,\% \\
+DFN      & r3, r4 (edge, off-path)          & 7.7--8.8\,\% \\
+DFN      & p1 / p2                          & 46.5\,\% / 2.3\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_zscore_tree.png}
+    \caption{IFA feature z-score heatmap (Tree, global model). The attacker c1 shows strong deviation in satisfaction ratio, NACK rate, and cache-hit ratio; backbone routers r1--r2 and producer p1 show secondary deviation; off-path nodes remain near zero. PIT-based features show no deviation.}
+    \label{fig:emu_zscore}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_score_timeline_tree.png}
+    \caption{Anomaly score over time (Tree) for the attacker c1, a benign consumer, and an on-path router. The attacker and on-path router cross the thresholds shortly after attack onset, while the benign consumer's elevation reflects the network-wide flood discussed below.}
+    \label{fig:emu_score_timeline}
+\end{figure}
+
+\subsection{Tree Topology: Network-Wide Flooding}
+
+In the Tree topology, benign consumers c2--c6 are flagged at 51--58\,\% at the operational threshold, an order of magnitude higher than in Dumbbell and DFN (below 7.3\,\%). This is not a model failure but a real network effect: the tree forces all consumer traffic through the shared backbone routers r1--r2, so c1's flood saturates those routers' PITs and generates NACKs that propagate to every branch. Each consumer therefore experiences degraded satisfaction, elevated NACK rate, and altered interest rates even though only c1 is attacking. In the mesh and dumbbell topologies, redundant forwarding paths keep the flood from overwhelming shared infrastructure, so benign consumers on isolated branches see near-normal traffic. IFA in a hierarchical network is thus a network-wide quality-of-service degradation event, not a point attack, and per-node detection rates capture this correctly.
+
+\subsection{Feature Discriminability (KS Test)}
+\label{sec:ks}
+
+Kolmogorov--Smirnov tests on the attacker node quantify which features separate attack from normal (Table~\ref{tab:ks}). Satisfaction ratio, cache-hit ratio, unsatisfied ratio, NACK rate, and the interest rates all separate the attacker almost perfectly ($D > 0.9$, $p < 10^{-200}$). In sharp contrast, the two PIT-based features are non-discriminating: \textit{pit\_size} has a mean $D$ of only 0.096 and \textit{pit\_growth\_rate} only 0.028. At the 3-second polling interval, transient PIT fills and drains between polls, so the textbook ``PIT explosion'' does not appear as a sustained, observable signal. This is why no PIT feature is used as a primary discriminator. Figure~\ref{fig:emu_ks} shows the full node-by-feature heatmap and Figure~\ref{fig:emu_featimp} the permutation importance.
+
+\begin{table}[H]
+\centering
+\caption{KS D-statistic for the attacker node c1 (normal vs.\ IFA), by feature.}
+\label{tab:ks}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Feature} & \textbf{Tree} & \textbf{Dumbbell} & \textbf{DFN} & \textbf{Mean} \\
+\midrule
+cache\_hit\_ratio    & 0.992 & 0.991 & 0.833 & 0.939 \\
+satisfaction\_ratio  & 0.888 & 0.987 & 0.966 & 0.947 \\
+unsatisfied\_ratio   & 0.888 & 0.987 & 0.966 & 0.947 \\
+nack\_rate           & 0.836 & 0.985 & 0.965 & 0.929 \\
+in\_interests\_rate  & 0.878 & 0.983 & 0.963 & 0.941 \\
+in\_data\_rate       & 0.765 & 0.969 & 0.962 & 0.899 \\
+cs\_size             & 0.803 & 0.935 & 0.941 & 0.893 \\
+pit\_size            & 0.107 & 0.086 & 0.095 & 0.096 \\
+pit\_growth\_rate    & 0.028 & 0.025 & 0.030 & 0.028 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_ks_heatmap_tree.png}
+    \caption{KS D-statistic heatmap (Tree), node by feature. Satisfaction, NACK, and cache-hit features separate the attacker and on-path nodes; PIT features are uniformly non-discriminating.}
+    \label{fig:emu_ks}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.82\textwidth]{emu_feature_importance.png}
+    \caption{Permutation-based feature importance on the IFA data (global model). Satisfaction, NACK, and cache-hit derived features dominate; PIT-based features contribute negligibly.}
+    \label{fig:emu_featimp}
+\end{figure}
+
+\subsection{Global versus Per-Topology Model}
+
+A single global model is compared against three topology-specific models (Figure~\ref{fig:emu_grid}). For dumbbell and DFN, attacker detection is statistically indistinguishable between the two. For the tree topology the per-topology model reaches 100\,\% attacker detection but also flags all benign nodes at 100\,\%, rendering it unusable: trained only on the tree's own normal baseline, it has no reference for a network-wide flood and sets its threshold too tight. The global model, trained across diverse topologies, learns a more robust baseline and is also markedly more sensitive at the strict threshold (98.7\,\% router detection in dumbbell versus 16--21\,\% for the per-topology model). The global model is therefore preferred: it is topology-agnostic and requires no per-deployment calibration.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{emu_detection_grid.png}
+    \caption{Global versus per-topology per-node detection across the three topologies. The global model matches or exceeds the per-topology models everywhere except the unusable per-topology Tree model, which saturates at 100\,\% on all nodes.}
+    \label{fig:emu_grid}
+\end{figure}
+
+\subsection{Cache Pollution: A Negative Result in Emulation}
+\label{sec:cp-negative}
+
+Cache Pollution produces no usable behavioral signature in the miniNDN feature set. Under the emulation traffic model the baseline cache-hit ratio at consumer nodes is already near zero, so an attack whose entire mechanism is to lower the cache-hit ratio has nothing to degrade: the polluted-traffic cache-hit ratio is statistically identical to normal. The satisfaction ratio, the other primary counter, remains high because polluted Interests are still answered by producers. CP is thus invisible to a behavioral detector in this setup. This negative result is itself informative: it shows that detecting CP requires an environment with an active, useful cache to disrupt, which is precisely what the ndnSIM simulation provides in Part~II.
+
+\section{Part II: ndnSIM Simulation Results (IFA and CP)}
+
+\subsection{Data Validity: Background Traffic Is Alive}
+\label{sec:ndnsim-validity}
+
+Every simulation detection number is measured against live background traffic. With the corrected catalog ($N = 300$) the legitimate consumers emit for the full 600\,s, including through the attack window, at about 4.4 interests/s per consumer (Figure~\ref{fig:traffic-health}). An earlier configuration with a small catalog exhausted the request stream about 30\,s into each run, so the background died and any ``detection'' was measured against an idle network with a trivial 0\,\% false-positive rate. The corrected configuration removes that artifact.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.75\textwidth]{fig_legit_traffic_health.png}
+    \caption{Legitimate consumer interest rate over time (ndnSIM), attack window shaded. The background stays flat and active for the full 600\,s, so detection is measured against a busy network rather than a silent one.}
+    \label{fig:traffic-health}
+\end{figure}
+
+\subsection{Detection and Localisation at a Representative Rate}
+
+At a high attacker rate the same Isolation Forest isolates every attacker node: the attacker anomaly score jumps far past the alarm (reaching the maximum for CP) while benign consumers stay near zero (Table~\ref{tab:ndnsim-lift}), and detection occurs within about one second of onset (Figure~\ref{fig:sim_timeseries}). As on the emulation platform, the score forms a spatial gradient along the forwarding path: attacker (IFA 78.4 / CP 100.0) $>$ on-path router (75.4 / 88.7) $>$ producer (60.7 / 63.7) $>$ off-path router ($\approx 36$) $>$ benign consumer ($\approx 2$), shown in Figure~\ref{fig:sim_spatial}. A feature ablation (Figure~\ref{fig:sim_ablation}) confirms the rate and count features carry the signal, and detection latency is about one second (Figure~\ref{fig:sim_latency}).
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM mean anomaly score before and after attack onset ($t = 301$\,s), global model. Benign is the mean over non-attacker consumers.}
+\label{tab:ndnsim-lift}
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Topology} & \textbf{Attack} & \textbf{Attacker pre} & \textbf{Attacker post} & \textbf{Benign post} & \textbf{Lift} \\
+\midrule
+DFN      & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+DFN      & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
+Dumbbell & IFA & 8.7 & 78.4  & 2.7 & \textbf{69.7} \\
+Dumbbell & CP  & 8.4 & 100.0 & 3.4 & \textbf{91.6} \\
+Tree     & IFA & 8.5 & 78.4  & 1.9 & \textbf{69.9} \\
+Tree     & CP  & 8.3 & 100.0 & 2.0 & \textbf{91.7} \\
+\midrule
+\multicolumn{5}{l}{Normal (all topologies), mean anomaly score} & \textbf{18.4} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_score_timeseries.png}
+    \caption{ndnSIM anomaly score over time for the attacker nodes against the normal band. The attacker crosses the alarm within about one second of the $t = 300$\,s onset for both attacks.}
+    \label{fig:sim_timeseries}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.85\textwidth]{fig_spatial_localization.png}
+    \caption{Mean anomaly score by node role and score versus hop distance (ndnSIM). The score traces the attack's forwarding path rather than decaying with hop count.}
+    \label{fig:sim_spatial}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_feature_ablation.png}
+        \caption{Feature ablation}
+        \label{fig:sim_ablation}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_detection_latency.png}
+        \caption{Detection latency}
+        \label{fig:sim_latency}
+    \end{subfigure}
+    \caption{ndnSIM detector diagnostics. (a) Attacker detection and normal FPR for full, counts-only, and ratios-only feature sets; the rate/count features carry most of the signal. (b) Detection latency by node role; attacker nodes are caught within about one second.}
+\end{figure}
+
+\subsection{Detection Floor: How Low Can the Attacker Go?}
+\label{sec:floor}
+
+Sweeping the attacker rate against live background traffic (Section~\ref{sec:sweep}) yields each attack's detection floor, the rate below which attacker-node detection falls under 90\,\% (Table~\ref{tab:floor}). The two floors are an order of magnitude apart (Figure~\ref{fig:floor-headline}).
+
+\begin{table}[H]
+\centering
+\caption{ndnSIM attacker-node detection (\%) versus rate, pooled over topologies and seeds. ``--'' means the rate was not sampled for that attack.}
+\label{tab:floor}
+\begin{tabular}{lcccccccccc}
+\toprule
+\textbf{Rate (Hz)} & 1 & 2 & 10 & 20 & 30 & 35 & 40 & 45 & 50 & 100 \\
+\midrule
+\textbf{CP}  & -- & -- & 21 & 42 & 60 & 71 & 83 & 92 & 100 & 100 \\
+\textbf{IFA} & 60 & 99.9 & 100 & 100 & 100 & -- & -- & -- & 100 & 100 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{CP degrades gracefully}, from 100\,\% above 50\,Hz to about 21\,\% at 10\,Hz, crossing 90\,\% near \textbf{44\,Hz}, because its only signature is interest volume, so it sinks into the legitimate baseline as its rate approaches it. \textbf{IFA holds 100\,\% down to about 4\,Hz and only breaks near 1\,Hz} (floor about \textbf{1.8\,Hz}), because its signature is qualitative (timeouts and NACKs to the black-hole) and survives at roughly the legitimate per-consumer volume. Figures~\ref{fig:floor-pertopo}, \ref{fig:score-sep}, and \ref{fig:score-rate} show the per-topology curves, the score-histogram collapse at low CP rate, and the score-versus-rate view of the same two floors.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.74\textwidth]{fig_floor_headline.png}
+    \caption{ndnSIM detection floor against live traffic. CP (volumetric) has a high floor (about 44\,Hz); IFA (qualitative timeout/NACK signature) has a floor an order of magnitude lower (about 1.8\,Hz). Shaded bands are $\pm 1$\,SD over topologies and seeds; the dashed line marks 90\,\% detection.}
+    \label{fig:floor-headline}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{fig_detection_floor.png}
+    \caption{Detection floor per topology (CP left, IFA right) with per-seed spread. The three topology curves are essentially superimposed and the per-seed spread is tight, so the floor is reproducible and topology-independent.}
+    \label{fig:floor-pertopo}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_score_separation.png}
+        \caption{Score separation}
+        \label{fig:score-sep}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_score_vs_rate.png}
+        \caption{Score versus rate}
+        \label{fig:score-rate}
+    \end{subfigure}
+    \caption{Why the floor exists, in score space. (a) At low CP rate the attacker score distribution collapses into the benign one, while IFA keeps separation to its floor. (b) The mean CP score slides through the alarm as the rate drops, while IFA stays pinned near 100 until it nearly stops sending.}
+\end{figure}
+
+\subsection{Why the Two Floors Differ}
+
+The floor gap follows from what each attack does, not from the detector or the topology. Cache Pollution is purely volumetric: its only signal is that a consumer is busy, which is exactly what a real consumer looks like, so as the junk rate approaches the legitimate baseline the attack becomes inseparable. Interest Flooding is qualitative: interests to the black-hole are never satisfied, so they spike the timeout and NACK ratios and crush the satisfaction ratio regardless of how few they are. Figure~\ref{fig:mechanism} shows this directly: IFA is detected barely above the legitimate baseline (about $1\times$) while CP is not reliably caught until about $10\times$. Consistently, the attacker feature-shift signature (Figure~\ref{fig:featsig}) shows CP driving the volume and cache counters by about $+6\sigma$ (a pure-volume signature) while IFA's defining shift is the timeout ratio at about $+3.7\sigma$ (a qualitative signature).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.66\textwidth]{fig_mechanism_contrast.png}
+    \caption{Detection versus attacker volume relative to the legitimate baseline. IFA is detected at about $1\times$ the baseline; CP requires about $10\times$. CP at 10\,Hz is louder ($3.7\times$) than IFA at 1\,Hz ($1.2\times$) yet detected far worse.}
+    \label{fig:mechanism}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.66\textwidth]{fig_feature_signature.png}
+    \caption{Attacker mean feature shift in the attack window (std-devs from normal). CP moves volume and cache counters; IFA moves the timeout ratio and satisfaction, a qualitative fingerprint.}
+    \label{fig:featsig}
+\end{figure}
+
+\subsection{Topology Invariance and False-Positive Rate}
+
+The detection floor is a property of the attack type, not the network: the detection heatmap over (rate $\times$ topology) is near-identical row to row (Figure~\ref{fig:heatmap}). Detection against sustained traffic carries a realistic 1--2\,\% false-positive rate (tree and DFN about 0.8--1.0\,\%, dumbbell about 2\,\%), not the trivial 0\,\% of the idle case (Figure~\ref{fig:fpr}). Figure~\ref{fig:sim_timeline} contrasts a high-rate run, where the score clears the alarm at onset, with a floor-rate run, where it never reliably crosses.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{fig_floor_heatmap.png}
+    \caption{Detection (\%) over attacker rate by topology for CP (left) and IFA (right). The three topology rows are near-identical at every rate.}
+    \label{fig:heatmap}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_fpr_vs_rate.png}
+        \caption{False-positive rate}
+        \label{fig:fpr}
+    \end{subfigure}\hfill
+    \begin{subfigure}{0.49\textwidth}
+        \includegraphics[width=\linewidth]{fig_score_timeline.png}
+        \caption{Onset, high versus floor rate}
+        \label{fig:sim_timeline}
+    \end{subfigure}
+    \caption{(a) Benign-consumer FPR versus attacker rate is a flat, real 1--2\,\%. (b) Attacker score over 600\,s: at a high rate the score clears the alarm at onset; at the floor rate it hovers at the alarm and detection is unreliable.}
+\end{figure}
+
+% =============================================================================
+\chapter{Discussion}
+% =============================================================================
+
+\section{Principal Findings}
+
+\textbf{IFA propagates along the forwarding path.} On both platforms the attacker is strongly detected, and the anomaly score forms a spatial gradient: on-path routers and the on-path producer are heavily flagged while off-path nodes stay near baseline. In the hierarchical tree topology the flood degrades every branch, so IFA is a network-wide quality-of-service event rather than a point attack. This spatial fingerprint enables approximate attacker localisation without routing-table access, because the set of alerting nodes constrains the forwarding path.
+
+\textbf{PIT-based features are not useful at practical polling intervals.} Contrary to the textbook PIT-exhaustion narrative, \textit{pit\_size} and \textit{pit\_growth\_rate} are non-discriminating in the emulation data ($D = 0.096$ and $0.028$), because the PIT fills and drains between 3-second polls. The features that actually carry the IFA signal are the satisfaction ratio, cache-hit ratio, and NACK rate. The simulation track likewise detects from face-level counters alone, with no PIT access.
+
+\textbf{The two attacks have detection floors an order of magnitude apart.} Against live traffic, CP crosses 90\,\% detection near 44\,Hz while IFA holds to about 4\,Hz and breaks near 1.8\,Hz, at a realistic 1--2\,\% false-positive rate. The floor, not the peak detection rate, is the security-relevant quantity: it bounds how stealthy each attack can be.
+
+\textbf{The floor gap is explained mechanistically.} A volumetric attack (CP) must out-shout the legitimate baseline (about $10\times$), so it hides as its rate approaches the crowd; a qualitative attack (IFA) stays detectable at about $1\times$ the baseline until it nearly stops sending. This is a cleaner, more defensible claim than reporting only high-rate detection.
+
+\textbf{The detector is topology-invariant and cross-platform consistent.} A single global model matches or beats per-topology models across hierarchical, mesh, and bottleneck structures, and the emulation and simulation platforms independently reproduce the same topology-invariant, path-localised IFA behavior, strengthening validity.
+
+\textbf{Benign nodes are not falsely flagged, except by genuine network effects.} Off-path benign nodes stay below the false-positive floor during attacks; the elevated benign scores in the tree topology reflect a real flood reaching every branch, not detector diffusion.
+
+\section{Traffic Mimicry: The Fundamental IFA Challenge}
+
+The IFA attacker mimics legitimate traffic in most features, so its raw-score depression is modest even when it drives the satisfaction ratio to near zero. The Isolation Forest averages isolation path lengths across all feature dimensions, so the contribution of the two or three genuinely deviating features is diluted by the many near-normal ones. This is why the operational 50\,\% threshold is essential: raising from the strict 30\,\% threshold lifts IFA attacker detection from the low range into the 91--99\,\% range while keeping the false-positive rate acceptable. Cache Pollution does not face this dilution in simulation, because its cascade perturbs several volume and cache features at once, producing stronger ensemble isolation, which is also why its high-rate detection is saturated and its interesting regime is the low-rate floor.
+
+\section{Why Cache Pollution Needs an Active Cache}
+
+The emulation negative result and the simulation floor together characterise CP precisely. CP has no behavioral footprint when the cache is not doing useful work (the miniNDN setup, where the baseline cache-hit ratio is near zero), and even when the cache is active (the ndnSIM setup) CP is only a volume signal, so it is detectable solely above a relatively high rate. CP is therefore the harder attack to catch behaviorally, and its detectability is environment-dependent in a way IFA's is not.
+
+\section{Feature Engineering Insights}
+
+The most discriminative features on both platforms, satisfaction ratio, cache-hit ratio, and NACK rate for IFA, and the volume and cache counters for CP, are all derived features requiring ratio or delta computation from raw counters. The value of the feature-engineering phase therefore lies in computing meaningful behavioral derivatives from a minimal counter set rather than in collecting more raw counters. Two operational cautions follow: features that are identically zero under normal traffic but non-zero under attack (NACK rate) must not be clipped to zero, and absolute-rate features are load-dependent, so a ratio-only feature set is preferable for robustness across traffic loads.
+
+\section{Comparison with Rule-Based Detection}
+
+A threshold-based rule detector implementing static thresholds on interest rate, satisfaction ratio, PIT size, and NACK rate represents the conventional NDN security approach. Such a detector is blind to Cache Pollution because CP maintains a high satisfaction ratio, the metric most commonly monitored, while degrading cache utility, and it is weakened by relying on PIT size, which this work shows is non-discriminating at practical polling. The Isolation Forest instead recognises the joint improbability of a low cache-hit ratio or a collapsed satisfaction ratio co-occurring with otherwise normal statistics, a capability available only through multi-feature analysis in a high-dimensional space. For IFA, the graduated threshold captures the early-warning zone that hard-threshold rules miss entirely.
+
+\section{Cross-Topology Generalisation}
+
+Training on combined data from Tree, Dumbbell, and DFN topologies produces a model that generalises across all three. Node types have fundamentally different normal baselines: routers carry high forwarding load and balanced interest-to-data ratios, while consumers have high outgoing interest rates and minimal PIT state. StandardScaler normalises these structural differences, and the unsupervised Isolation Forest captures the joint behavioral distribution spanning all node types and topologies without requiring separate models.
+
+\section{Limitations and Future Work}
+
+The emulation study evaluates IFA only; CP coverage is provided by simulation, and mixed or concurrent attacks were not evaluated on either platform. The 3-second emulation polling interval averages out sub-second PIT dynamics, which explains the non-discriminating PIT features; sub-second polling could recover them and is worth evaluating. The simulation uses idealised links, and the reported detection-floor crossings are interpolated between sampled rates, so they are best quoted as bands (CP 40--45\,Hz, IFA 1--2\,Hz) rather than exact values; the two highest sweep rates use a single seed. The static Isolation Forest does not adapt to gradual concept drift and would need periodic retraining in long-running deployments. The IFA mimicry limitation suggests augmenting the feature set with temporal statistics (for example, autocorrelation of the NACK rate or inter-arrival times) to add dimensions in which IFA departs from normal. Finally, content-integrity attacks that preserve normal traffic statistics cannot be detected behaviorally and would require complementary signature or provenance verification.
+
+% =============================================================================
+\chapter{Conclusion}
+% =============================================================================
+
+This project designed, implemented, and evaluated an unsupervised anomaly detection system for Named Data Networking using Isolation Forest behavioral analysis, validated on two independent platforms with a single global model and three shared topologies. On the miniNDN emulation platform the system extracts ten behavioral features per node from lightweight NFD counter queries; on the ndnSIM simulation platform the same detector operates on nine face-level tracer features and an attacker-rate sweep of 297 runs.
+
+The emulation results correct the conventional understanding of IFA in two ways. First, IFA is not source-concentrated: the global model detects the attacker at 91.2\,\%, 98.7\,\%, and 96.8\,\% across the three topologies at the operational threshold, and the anomaly score forms a spatial fingerprint along the forwarding path, flagging backbone routers at 90--99\,\% and the on-path producer at up to 90.5\,\%, with a network-wide effect in the hierarchical tree topology. Second, PIT-based features are non-discriminating at practical polling intervals; the satisfaction ratio, cache-hit ratio, and NACK rate carry the signal, at false-positive rates below 4.3\,\% on clean traffic. Cache Pollution leaves no behavioral footprint in emulation, a negative result that motivated the simulation study.
+
+The simulation results contribute the central quantitative finding: the two attacks have detection floors an order of magnitude apart. Cache Pollution, a purely volumetric attack, is only reliably detected above about 44\,Hz, whereas Interest Flooding, whose timeout and NACK signature is qualitative, remains detectable down to about 1.8\,Hz, at a realistic 1--2\,\% false-positive rate, and the floors are topology-invariant. The graduated threshold design is essential for IFA, and the real-time dashboard detects attack onset within seconds while providing feature-level explanations. Together these results demonstrate that multi-dimensional behavioral analysis with a single unsupervised model reliably detects both attack types without labeled attack data, and that the security-relevant limit of such detection is the attack's mechanism-dependent detection floor.
+
+% ── References ────────────────────────────────────────────────────────────────
+\addcontentsline{toc}{chapter}{\numberline{}References}
+\renewcommand{\bibname}{References}
+\bibliographystyle{unsrt}
+\nocite{*}
+\bibliography{ref}
+
+\end{document}
