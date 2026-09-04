@@ -1,0 +1,4 @@
+capture,n_intervals,fpr_full_pct,fpr_ratio_pct
+logs_dumbbell1,30095,40.9,2.1
+logs_mesh1,48306,4.9,1.3
+logs1,23393,1.8,0.6
