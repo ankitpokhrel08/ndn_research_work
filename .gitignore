@@ -79,3 +79,6 @@ NDNsim_v*/processed/*.csv
 !NDNsim_v*/processed/detection_per_node.csv
 !NDNsim_v*/processed/spatial_localization.csv
 miniNDN/Datacard/Datasets/*.csv
+
+# local AI assistant instructions (not for the repo)
+CLAUDE.md
